@@ -31,12 +31,14 @@ run team="": gen
 uitest: gen
     #!/usr/bin/env bash
     set -euo pipefail
-    mkdir -p build
-    python3 scripts/gateway-fixture.py --pairing > build/pairing-fixture.port &
+    port_file="$(mktemp)"
+    python3 scripts/gateway-fixture.py --pairing > "$port_file" &
     fixture=$!
-    trap 'kill "$fixture" 2>/dev/null || true' EXIT
-    for _ in $(seq 50); do [ -s build/pairing-fixture.port ] && break; sleep 0.1; done
-    TEST_RUNNER_OHMYOPENCLAW_PAIRING_FIXTURE="ws://127.0.0.1:$(head -1 build/pairing-fixture.port)" {{xcodebuild}} test
+    trap 'kill "$fixture" 2>/dev/null || true; rm -f "$port_file"' EXIT
+    for _ in $(seq 50); do [ -s "$port_file" ] && break; sleep 0.1; done
+    port="$(head -1 "$port_file")"
+    if [ -z "$port" ]; then echo "The pairing fixture did not publish a port." >&2; exit 1; fi
+    TEST_RUNNER_OHMYOPENCLAW_PAIRING_FIXTURE="ws://127.0.0.1:$port" {{xcodebuild}} test
 
 # Start the synthetic loopback Gateway fixture for local development.
 fixture port="9876":
