@@ -94,7 +94,7 @@ struct ConnectionView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Gateway でこの Mac を承認してください", systemImage: "lock.shield").font(.headline)
                 Text(message).font(.callout)
-                Text(requestID.isEmpty ? "openclaw devices list" : "openclaw devices list\nopenclaw devices approve \(requestID)")
+                Text(PairingGuidance.commands(requestID: requestID))
                     .font(.system(.callout, design: .monospaced))
                     .textSelection(.enabled)
                 Button("承認後に再接続") { Task { await model.retryConnection() } }
