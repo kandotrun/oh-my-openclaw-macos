@@ -2,10 +2,13 @@ import Foundation
 import Security
 
 enum CredentialStore {
-    private static let service = "run.kandot.oh-my-openclaw.credentials"
+    static let service = "run.kandot.oh-my-openclaw.mac.credentials"
 
-    private static func itemQuery(_ key: String) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: key]
+    /// The data protection keychain matches iOS semantics on the Mac and avoids
+    /// legacy keychain access prompts when the app's signature changes.
+    static func itemQuery(_ key: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: key,
+         kSecUseDataProtectionKeychain as String: true]
     }
 
     static func read<T: Decodable>(_ type: T.Type, key: String) throws -> T? {
@@ -37,6 +40,6 @@ enum CredentialStore {
     private struct CredentialError: LocalizedError {
         let status: OSStatus
         var operation = "保存"
-        var errorDescription: String? { "接続情報を\(operation)できませんでした（\(status)）。端末のロックを解除してやり直してください。" }
+        var errorDescription: String? { "接続情報を\(operation)できませんでした（\(status)）。キーチェーンへのアクセスを確認して、もう一度お試しください。" }
     }
 }
