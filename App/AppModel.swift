@@ -777,6 +777,8 @@ final class AppModel {
             else if event.name == "sessions.changed" { try? await refreshRoster() }
             if event.name == "sessions.changed", Self.isCollapsedMessageNotification(payload),
                let target = selectedSession, Self.notification(payload, row: row, targets: target) {
+                // A read already in flight predates these messages; keep its stale snapshot from settling the refresh.
+                streamRevisions[target.id, default: 0] += 1
                 pendingHistoryRefresh.insert(target.id); scheduleQuietRefresh()
             }
             return

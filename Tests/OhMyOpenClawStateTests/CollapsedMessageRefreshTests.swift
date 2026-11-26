@@ -90,3 +90,79 @@ private func historyReads(_ gateway: CollapsedNotificationGateway, key: String, 
     #expect(await gateway.historyReads(for: collapsedMain.key) == main)
     await app.disconnect()
 }
+
+/// Holds one history read so a notification can arrive while its stale
+/// snapshot is still on the wire.
+private actor HeldHistoryGateway: GatewayServing {
+    private var continuation: AsyncStream<GatewayEvent>.Continuation?
+    private var transcript: [JSONValue] = [.object(["id": .string("first"), "role": .string("assistant"), "content": .string("First")])]
+    private var holdNext = false
+    private var holding = false
+    private var held: CheckedContinuation<Void, Never>?
+    private var started: CheckedContinuation<Void, Never>?
+
+    func connect() async throws -> GatewayHello {
+        GatewayHello(payload: .object(["snapshot": .object(["sessionDefaults": .object([
+            "defaultAgentId": .string("a"), "mainSessionKey": .string(collapsedMain.key),
+        ])])]))
+    }
+    func events() async -> AsyncStream<GatewayEvent> {
+        let stream = AsyncStream<GatewayEvent>.makeStream()
+        continuation = stream.continuation
+        return stream.stream
+    }
+    func disconnect() async { continuation?.finish() }
+    func request(method: String, params: JSONValue) async throws -> JSONValue {
+        guard method == "chat.history" else { return .object([:]) }
+        let snapshot = transcript
+        if holdNext {
+            holdNext = false; holding = true
+            started?.resume(); started = nil
+            await withCheckedContinuation { held = $0 }
+        }
+        return .object(["sessionId": .string(collapsedSide.sessionID!), "messages": .array(snapshot)])
+    }
+    func holdNextHistoryRead() { holdNext = true }
+    func waitUntilHolding() async {
+        if holding { return }
+        await withCheckedContinuation { started = $0 }
+    }
+    func commit(_ text: String) {
+        transcript.append(.object(["id": .string(text), "role": .string("assistant"), "content": .string(text)]))
+    }
+    func releaseHeldRead() { holding = false; held?.resume(); held = nil }
+    func emitSessionsChanged(_ payload: [String: JSONValue]) {
+        continuation?.yield(GatewayEvent(name: "sessions.changed", payload: .object(payload)))
+    }
+}
+
+@Test @MainActor func collapsedNotificationDuringAnInFlightReadStillRefetches() async throws {
+    let gateway = HeldHistoryGateway()
+    var store = ConversationStore()
+    store.upsertSession(collapsedMain); store.upsertSession(collapsedSide)
+    store.selectedID = collapsedSide.id
+    let app = AppModel(service: gateway, initialStore: store)
+    await app.establishConnection()
+
+    await gateway.holdNextHistoryRead()
+    let staleRead = Task { try await app.refreshHistory(for: collapsedSide) }
+    await gateway.waitUntilHolding()
+    await gateway.commit("Committed while reading")
+    await gateway.emitSessionsChanged([
+        "sessionKey": .string(collapsedSide.key), "agentId": .string("a"), "phase": .string("message"),
+        "session": .object(["key": .string(collapsedSide.key), "agentId": .string("a"), "sessionId": .string(collapsedSide.sessionID!), "label": .string("Handled")]),
+    ])
+    // The label proves the handler ran before the stale snapshot is released.
+    let handledBy = ContinuousClock.now + .seconds(1)
+    while app.sessions.first(where: { $0.id == collapsedSide.id })?.title != "Handled", ContinuousClock.now < handledBy { await Task.yield() }
+    #expect(app.sessions.first(where: { $0.id == collapsedSide.id })?.title == "Handled")
+
+    await gateway.releaseHeldRead()
+    try await staleRead.value
+    let deadline = ContinuousClock.now + .seconds(1)
+    while !app.messages.contains(where: { $0.text == "Committed while reading" }), ContinuousClock.now < deadline {
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+    #expect(app.messages.contains { $0.text == "Committed while reading" })
+    await app.disconnect()
+}
