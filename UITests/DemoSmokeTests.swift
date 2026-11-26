@@ -22,6 +22,48 @@ final class DemoSmokeTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["こんにちは。ここでは何ができる？"].waitForExistence(timeout: 10))
     }
 
+    /// Threads can be added one after another from the sidebar.
+    @MainActor
+    func testSidebarButtonAddsThreads() throws {
+        let app = launchIsolatedApp()
+        let demo = app.buttons["tryDemo"]
+        XCTAssertTrue(demo.waitForExistence(timeout: 10))
+        demo.click()
+        XCTAssertTrue(app.staticTexts["メインチャット"].waitForExistence(timeout: 10))
+        let before = app.descendants(matching: .any).matching(identifier: "threadRow").count
+        let newThread = app.buttons["newThreadButton"]
+        XCTAssertTrue(newThread.waitForExistence(timeout: 5))
+        newThread.click()
+        newThread.click()
+        let rows = app.descendants(matching: .any).matching(identifier: "threadRow")
+        let deadline = Date().addingTimeInterval(10)
+        while rows.count < before + 2 && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.2)) }
+        XCTAssertEqual(rows.count, before + 2)
+    }
+
+    /// Return sends; Shift-Return adds a line without sending.
+    @MainActor
+    func testComposerSendsWithReturnAndShiftReturnAddsALine() throws {
+        let app = launchIsolatedApp()
+        let demo = app.buttons["tryDemo"]
+        XCTAssertTrue(demo.waitForExistence(timeout: 10))
+        demo.click()
+        let composer = app.textViews["composerText"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        composer.click()
+        composer.typeText("一行目")
+        composer.typeKey(.return, modifierFlags: .shift)
+        composer.typeText("二行目")
+        XCTAssertEqual(composer.value as? String, "一行目\n二行目")
+        XCTAssertFalse(app.staticTexts["一行目\n二行目"].exists)
+        composer.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(app.staticTexts["一行目\n二行目"].waitForExistence(timeout: 10))
+        XCTAssertEqual(composer.value as? String, "")
+        // Selectable text exposes its content as the element's value.
+        let reply = app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "について、一緒に考えましょう", "について、一緒に考えましょう")).firstMatch
+        XCTAssertTrue(reply.waitForExistence(timeout: 20))
+    }
+
     /// Errors from Gateway actions stay visible when only the Settings window is open.
     @MainActor
     func testConnectionFailureIsShownInSettings() throws {
