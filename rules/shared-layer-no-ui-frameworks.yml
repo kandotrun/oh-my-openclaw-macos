@@ -1,0 +1,18 @@
+id: shared-layer-no-ui-frameworks
+language: Swift
+severity: error
+rule:
+  kind: import_declaration
+  has:
+    kind: identifier
+    regex: '^(SwiftUI|AppKit|UIKit)(\.|$)'
+message: The shared layer must not import a UI framework.
+note: |
+  Sources/OhMyOpenClawCore and the copied state files stay portable between this
+  repository and oh-my-openclaw-ios. Put Mac UI code in App/Views and Mac system
+  adapters in App/Platform.
+files:
+  - Sources/OhMyOpenClawCore/**
+  - App/AppModel.swift
+  - App/CredentialStore.swift
+  - App/GatewayProfiles.swift

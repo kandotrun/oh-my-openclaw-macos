@@ -1,0 +1,9 @@
+id: no-uikit
+valid:
+  - import AppKit
+  - import SwiftUI
+  - import UniformTypeIdentifiers
+invalid:
+  - import UIKit
+  - import class UIKit.UIColor
+  - "@preconcurrency import UIKit"
