@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 enum CredentialStore {
-    static let service = "run.kandot.oh-my-openclaw.mac.credentials"
+    private static let service = "run.kandot.oh-my-openclaw.mac.credentials"
 
     /// The data protection keychain matches iOS semantics on the Mac and avoids
     /// legacy keychain access prompts when the app's signature changes.
