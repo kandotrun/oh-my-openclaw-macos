@@ -36,7 +36,10 @@ final class DemoSmokeTests: XCTestCase {
         app.buttons["connectButton"].click()
         XCTAssertTrue(app.buttons["connectButton"].waitForExistence(timeout: 15))
         app.typeKey(",", modifierFlags: .command)
-        XCTAssertTrue(app.staticTexts["settingsError"].waitForExistence(timeout: 15))
+        let error = app.staticTexts["settingsError"]
+        XCTAssertTrue(error.waitForExistence(timeout: 15))
+        app.buttons["dismissSettingsError"].click()
+        XCTAssertTrue(error.waitForNonExistence(timeout: 5))
     }
 
     /// `just uitest` starts scripts/gateway-fixture.py --pairing and passes its URL.

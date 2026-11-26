@@ -37,10 +37,16 @@ private struct GatewaySettings: View {
                 }
                 // Failures from switching, renaming, or saving Gateways must be visible here too.
                 if let message = model.errorMessage {
-                    Label(message, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.red)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("settingsError")
+                    HStack(alignment: .firstTextBaseline) {
+                        Label(message, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("settingsError")
+                        Spacer()
+                        Button("閉じる") { model.errorMessage = nil }
+                            .buttonStyle(.borderless)
+                            .accessibilityIdentifier("dismissSettingsError")
+                    }
                 }
             }
             Section("保存済みの Gateway") {
