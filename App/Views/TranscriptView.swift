@@ -22,7 +22,7 @@ struct TranscriptView: View {
                             }
                         }
                         .buttonStyle(.link)
-                        .disabled(loadingOlder)
+                        .disabled(loadingOlder || model.connectionState != .connected || model.changingConnection)
                         .frame(maxWidth: .infinity)
                     }
                     if model.messages.isEmpty {

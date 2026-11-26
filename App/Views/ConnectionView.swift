@@ -91,18 +91,7 @@ struct ConnectionView: View {
     private var feedback: some View {
         switch model.connectionState {
         case .pairing(let requestID, let message):
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Gateway でこの Mac を承認してください", systemImage: "lock.shield").font(.headline)
-                Text(message).font(.callout)
-                Text(PairingGuidance.commands(requestID: requestID))
-                    .font(.system(.callout, design: .monospaced))
-                    .textSelection(.enabled)
-                Button("承認後に再接続") { Task { await model.retryConnection() } }
-                    .disabled(isConnecting)
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+            PairingGuidanceView(model: model, requestID: requestID, message: message)
         case .failed(let message):
             Label(message, systemImage: "exclamationmark.circle").foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
         default:

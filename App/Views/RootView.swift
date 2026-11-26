@@ -11,7 +11,12 @@ struct RootView: View {
             ThreadSidebar(model: model, search: $search)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 360)
         } detail: {
-            Group {
+            VStack(spacing: 0) {
+                if let banner = DetailContent.pairingBanner(hasSessions: !model.sessions.isEmpty, state: model.connectionState) {
+                    PairingGuidanceView(model: model, requestID: banner.requestID, message: banner.message)
+                        .padding(12)
+                    Divider()
+                }
                 if model.sessions.isEmpty { ConnectionView(model: model) }
                 else { TranscriptView(model: model) }
             }

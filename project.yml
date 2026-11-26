@@ -38,7 +38,7 @@ targets:
         ENABLE_OUTGOING_NETWORK_CONNECTIONS: YES
         ENABLE_USER_SELECTED_FILES: readonly
         CODE_SIGN_STYLE: Automatic
-        # Sign to Run Locally by default; `just run team=<ID>` signs with a development team.
+        # Sign to Run Locally by default; `just run <TEAM_ID>` signs with a development team.
         CODE_SIGN_IDENTITY: '-'
   OhMyOpenClawUITests:
     type: bundle.ui-testing
