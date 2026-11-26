@@ -22,6 +22,23 @@ final class DemoSmokeTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["こんにちは。ここでは何ができる？"].waitForExistence(timeout: 10))
     }
 
+    /// Errors from Gateway actions stay visible when only the Settings window is open.
+    @MainActor
+    func testConnectionFailureIsShownInSettings() throws {
+        let app = launchIsolatedApp()
+        let url = app.textFields["connectionURL"]
+        XCTAssertTrue(url.waitForExistence(timeout: 10))
+        url.click()
+        url.typeText("ws://127.0.0.1:9")
+        let secret = app.secureTextFields["connectionSecret"]
+        secret.click()
+        secret.typeText("synthetic-token")
+        app.buttons["connectButton"].click()
+        XCTAssertTrue(app.buttons["connectButton"].waitForExistence(timeout: 15))
+        app.typeKey(",", modifierFlags: .command)
+        XCTAssertTrue(app.staticTexts["settingsError"].waitForExistence(timeout: 15))
+    }
+
     /// `just uitest` starts scripts/gateway-fixture.py --pairing and passes its URL.
     @MainActor
     func testFirstConnectionShowsPairingGuidance() throws {

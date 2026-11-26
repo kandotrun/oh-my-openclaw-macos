@@ -35,6 +35,13 @@ private struct GatewaySettings: View {
                     Button("接続を切る", role: .destructive) { Task { await model.disconnect() } }
                         .disabled(model.changingConnection || model.connectionState == .disconnected)
                 }
+                // Failures from switching, renaming, or saving Gateways must be visible here too.
+                if let message = model.errorMessage {
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("settingsError")
+                }
             }
             Section("保存済みの Gateway") {
                 if model.savedGateways.isEmpty {
