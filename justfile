@@ -27,9 +27,16 @@ run team="": gen
     {{xcodebuild}} {{ if team == "" { "" } else { "DEVELOPMENT_TEAM=" + team + " CODE_SIGN_IDENTITY='Apple Development'" } }} build
     open "build/Build/Products/Debug/Oh My OpenClaw.app"
 
-# Run the UI smoke test against the demo.
+# Run the UI smoke tests against the demo and a pairing-only loopback fixture.
 uitest: gen
-    {{xcodebuild}} test
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p build
+    python3 scripts/gateway-fixture.py --pairing > build/pairing-fixture.port &
+    fixture=$!
+    trap 'kill "$fixture" 2>/dev/null || true' EXIT
+    for _ in $(seq 50); do [ -s build/pairing-fixture.port ] && break; sleep 0.1; done
+    TEST_RUNNER_OHMYOPENCLAW_PAIRING_FIXTURE="ws://127.0.0.1:$(head -1 build/pairing-fixture.port)" {{xcodebuild}} test
 
 # Start the synthetic loopback Gateway fixture for local development.
 fixture port="9876":
