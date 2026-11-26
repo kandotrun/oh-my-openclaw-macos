@@ -775,6 +775,10 @@ final class AppModel {
                 store.upsertSession(session); scheduleSave()
             }
             else if event.name == "sessions.changed" { try? await refreshRoster() }
+            if event.name == "sessions.changed", Self.isCollapsedMessageNotification(payload),
+               let target = selectedSession, Self.notification(payload, row: row, targets: target) {
+                pendingHistoryRefresh.insert(target.id); scheduleQuietRefresh()
+            }
             return
         }
         if event.name == "session.message", let target = selectedSession, payload["sessionKey"].stringValue == target.key {
@@ -785,6 +789,19 @@ final class AppModel {
             resolvedPromptIDs.insert(id)
             promptRecords.removeAll { $0.id == id || $0.id.hasPrefix(id + "|") }; questionRecords[id] = nil; questionAnswers[id] = nil
         }
+    }
+
+    /// Collapsed notifications cannot name individual messages; only a history read recovers them.
+    nonisolated static func isCollapsedMessageNotification(_ payload: JSONValue) -> Bool {
+        guard payload["phase"].stringValue == "message", let fields = payload.objectValue else { return false }
+        return fields["message"] == nil && fields["messageId"] == nil && fields["messageSeq"] == nil
+    }
+
+    nonisolated static func notification(_ payload: JSONValue, row: JSONValue, targets target: ChatSession) -> Bool {
+        guard let key = payload["sessionKey"].stringValue ?? payload["key"].stringValue ?? row["key"].stringValue ?? row["sessionKey"].stringValue,
+              key == target.key else { return false }
+        let agent = payload["agentId"].stringValue ?? row["agentId"].stringValue
+        return agent == nil || agent == target.agentID
     }
 
     private func scheduleQuietRefresh() {
