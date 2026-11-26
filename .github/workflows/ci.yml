@@ -17,3 +17,13 @@ jobs:
       - run: xcodebuild -version && swift --version
       - run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - run: swift test
+  app:
+    name: App
+    runs-on: xcode-27
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+    steps:
+      - uses: actions/checkout@v5
+      - run: brew install just xcodegen ast-grep
+      - run: just lint
+      - run: just build
