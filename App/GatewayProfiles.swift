@@ -132,7 +132,8 @@ struct GatewayConnectionAccess {
                      identity = DeviceIdentity()
                      try CredentialStore.write(identity.privateKeyData, key: "device-identity")
                  }
-                 return GatewayClient(endpoint: url, credentials: credentials, identity: identity)
+                 let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? GatewayClientIdentity().version
+                 return GatewayClient(endpoint: url, credentials: credentials, identity: identity, clientIdentity: GatewayClientIdentity(version: version))
              })
     }
 }

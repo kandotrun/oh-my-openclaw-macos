@@ -97,6 +97,7 @@ class Client(socketserver.StreamRequestHandler):
             assert params["minProtocol"] <= 4 <= params["maxProtocol"]
             assert params["client"]["id"] == "gateway-client"
             assert params["client"]["mode"] == "ui" and params["role"] == "operator"
+            assert params["client"]["platform"] == "macos" and params["client"]["deviceFamily"] == "Mac"
             assert params["device"]["nonce"] == "fixture-challenge"
             assert params["device"]["signedAt"] == self.timestamp
             assert len(params["device"]["id"]) == 64

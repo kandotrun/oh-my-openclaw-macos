@@ -15,6 +15,7 @@ public actor GatewayClient: GatewayServing {
     private let endpoint: URL
     private let credentials: GatewayCredentials
     private let identity: DeviceIdentity
+    private let clientIdentity: GatewayClientIdentity
     private let session: URLSession
     private var socket: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
@@ -34,8 +35,8 @@ public actor GatewayClient: GatewayServing {
 
     deinit { session.invalidateAndCancel() }
 
-    public init(endpoint: URL, credentials: GatewayCredentials, identity: DeviceIdentity) {
-        self.endpoint = endpoint; self.credentials = credentials; self.identity = identity
+    public init(endpoint: URL, credentials: GatewayCredentials, identity: DeviceIdentity, clientIdentity: GatewayClientIdentity = GatewayClientIdentity()) {
+        self.endpoint = endpoint; self.credentials = credentials; self.identity = identity; self.clientIdentity = clientIdentity
         let config = URLSessionConfiguration.ephemeral
         config.httpCookieStorage = nil
         config.httpShouldSetCookies = false
@@ -128,8 +129,8 @@ public actor GatewayClient: GatewayServing {
             let params: JSONValue = .object([
                 "minProtocol": .number(4), "maxProtocol": .number(4),
                 "client": .object([
-                    "id": .string("gateway-client"), "displayName": .string("Oh My OpenClaw"),
-                    "version": .string("0.1.0"), "platform": .string("ios"), "deviceFamily": .string("iPhone"),
+                    "id": .string("gateway-client"), "displayName": .string(clientIdentity.displayName),
+                    "version": .string(clientIdentity.version), "platform": .string(clientIdentity.platform), "deviceFamily": .string(clientIdentity.deviceFamily),
                     "mode": .string("ui"), "instanceId": .string(identity.deviceID),
                 ]),
                 "role": .string("operator"), "scopes": .array(scopes.map(JSONValue.string)),
