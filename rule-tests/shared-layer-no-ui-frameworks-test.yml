@@ -1,0 +1,11 @@
+id: shared-layer-no-ui-frameworks
+valid:
+  - import Foundation
+  - import CryptoKit
+  - import OhMyOpenClawCore
+  - import Observation
+invalid:
+  - import SwiftUI
+  - import AppKit
+  - "@preconcurrency import AppKit"
+  - import struct UIKit.UIImage

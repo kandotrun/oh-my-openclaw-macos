@@ -6,7 +6,20 @@ It is an independent client, without a hosted AI service, Gateway management, or
 The app is in development.
 The approved design is in [docs/superpowers/specs/2026-11-26-macos-client-design.md](docs/superpowers/specs/2026-11-26-macos-client-design.md).
 
-Requirements: macOS 27, Xcode 27 with Swift 6.4, and [XcodeGen](https://github.com/yonaskolb/XcodeGen) once the app target lands.
+## Build and run
+
+Requirements: macOS 27, Xcode 27 with Swift 6.4, [XcodeGen](https://github.com/yonaskolb/XcodeGen), [just](https://github.com/casey/just), and [ast-grep](https://ast-grep.github.io).
+
+```sh
+brew install xcodegen just ast-grep
+just run                     # signed to run locally; suits the built-in demo
+just run <TEAM_ID>           # signed with your Apple Development team; needed for real Gateways
+```
+
+The project specification is `project.yml`; the generated `OhMyOpenClaw.xcodeproj` is intentionally ignored.
+The app is sandboxed and stores credentials in the data protection keychain, which requires a build signed with a development team.
+A build signed to run locally can open the demo but cannot save Gateway credentials.
+The demo uses synthetic conversations and never contacts a Gateway or AI provider.
 
 ## Shared layer
 
@@ -27,10 +40,11 @@ Adapted OpenClaw authentication code retains its upstream MIT notice in [THIRD_P
 ## Tests
 
 ```sh
-just test
+just test     # Python fixture tests and swift test
+just lint     # ast-grep layer rules and their tests
+just uitest   # XCUITest smoke test against the demo
 ```
 
-This runs the Python fixture tests and `swift test`.
 The Swift suites cover device proofs, safe endpoints and setup codes, conversation state, and a real loopback WebSocket exchange with the synthetic Python fixture.
 That fixture proves client transport and framing behavior. It is not an OpenClaw instance or evidence of production connectivity.
 It binds only to `127.0.0.1`, needs only Python 3's standard library, and uses synthetic credentials.

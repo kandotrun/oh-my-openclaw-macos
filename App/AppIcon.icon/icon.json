@@ -1,0 +1,71 @@
+{
+  "fill": {
+    "solid": "srgb:0.98039,0.97647,0.96471,1.00000"
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "image-name": "Claw.png",
+          "name": "Milky glass",
+          "fill": {
+            "solid": "srgb:1.00000,0.98500,0.97000,1.00000"
+          },
+          "glass": true,
+          "position": {
+            "scale": 0.82,
+            "translation-in-points": [
+              -2,
+              -8
+            ]
+          },
+          "opacity": 0.9
+        }
+      ],
+      "blur-material": 0.5,
+      "lighting": "individual",
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.18
+      },
+      "specular": true,
+      "translucency": {
+        "enabled": true,
+        "value": 0.72
+      }
+    },
+    {
+      "layers": [
+        {
+          "image-name": "Claw.png",
+          "name": "Coral backing",
+          "fill": {
+            "solid": "srgb:1.00000,0.34510,0.28627,1.00000"
+          },
+          "glass": true,
+          "position": {
+            "scale": 0.82,
+            "translation-in-points": [
+              12,
+              16
+            ]
+          }
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.4
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      },
+      "specular": true
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}

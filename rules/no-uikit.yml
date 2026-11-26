@@ -1,0 +1,10 @@
+id: no-uikit
+language: Swift
+severity: error
+rule:
+  kind: import_declaration
+  has:
+    kind: identifier
+    regex: '^UIKit(\.|$)'
+message: This is a macOS app; use AppKit or SwiftUI instead of UIKit.
+note: Code ported from oh-my-openclaw-ios must replace UIKit types such as UIPasteboard and UIImage with their AppKit equivalents.

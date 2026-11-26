@@ -66,6 +66,22 @@ class FixtureConcurrencyTests(unittest.TestCase):
         self.assertFalse(second.is_alive())
         self.assertEqual([frame["seq"] for frame in frames], [1, 2])
 
+    def test_pairing_mode_rejects_connect_with_a_shell_safe_request_id(self):
+        client = self.client()
+        client.admitted = False
+        client.timestamp = 1
+        client.server.pairing = True
+        frames = []
+        client.send = frames.append
+        client.dispatch({"type": "req", "id": "connect", "method": "connect", "params": {
+            "minProtocol": 4, "maxProtocol": 4, "role": "operator", "scopes": ["operator.read"],
+            "client": {"id": "gateway-client", "mode": "ui", "platform": "macos", "deviceFamily": "Mac"},
+            "device": {"nonce": "fixture-challenge", "signedAt": 1, "id": "a" * 64}}})
+        self.assertFalse(frames[0]["ok"])
+        self.assertEqual(frames[0]["error"]["code"], "NOT_PAIRED")
+        self.assertEqual(frames[0]["error"]["details"], {"code": "PAIRING_REQUIRED", "requestId": "req-fixture-1"})
+        self.assertFalse(client.admitted)
+
 
 if __name__ == "__main__":
     unittest.main()

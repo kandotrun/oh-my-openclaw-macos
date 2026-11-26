@@ -101,6 +101,11 @@ class Client(socketserver.StreamRequestHandler):
             assert params["device"]["nonce"] == "fixture-challenge"
             assert params["device"]["signedAt"] == self.timestamp
             assert len(params["device"]["id"]) == 64
+            if getattr(self.server, "pairing", False):
+                # Pairing mode: every connect needs approval on the Gateway host.
+                self.send({"type": "res", "id": frame["id"], "ok": False, "error": {"code": "NOT_PAIRED", "message": "pairing required",
+                    "details": {"code": "PAIRING_REQUIRED", "requestId": "req-fixture-1"}}})
+                return
             self.admitted = True
             self.result(frame, {"type": "hello-ok", "protocol": 4,
                 "server": {"version": "fixture-only", "connId": "fixture"},
@@ -191,8 +196,10 @@ class Server(socketserver.ThreadingTCPServer):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--pairing", action="store_true", help="reject every connect with a pairing request")
     options = parser.parse_args()
     with Server(("127.0.0.1", options.port), Client) as server:
+        server.pairing = options.pairing
         server.sessions = {"agent:fixture:main": {"key": "agent:fixture:main", "agentId": "fixture", "sessionId": "fixture-main", "displayName": "Main"}}
         server.messages = {}
         print(server.server_address[1], flush=True)

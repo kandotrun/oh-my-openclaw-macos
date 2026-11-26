@@ -1,11 +1,17 @@
 # Oh My OpenClaw for Mac — Design
 
-Date: 2026-11-26
+Date: 2026-11-26 (revised the same day for development work)
 Status: approved for implementation
 
 ## Goal
 
-A calm, chat-first, native macOS client for a personal OpenClaw Gateway, matching the scope and tone of the iOS client [oh-my-openclaw-ios](https://github.com/kandotrun/oh-my-openclaw-ios). It is an independent chat client. It hosts no AI service, manages no Gateway, and embeds no administration console.
+A native macOS client for a personal OpenClaw Gateway, built for having the agent do software development. The interaction model follows [T3 Code](https://github.com/pingdotgg/t3code):
+
+- Threads live under projects and run in parallel.
+- Each turn's agent work (commands, edits, reads, diffs) is visible in a dense work log.
+- Approvals happen inline, and notifications report finished or blocked threads.
+
+It is an independent client. It hosts no AI service, manages no Gateway, and embeds no administration console. The shared Gateway layer comes from the iOS client [oh-my-openclaw-ios](https://github.com/kandotrun/oh-my-openclaw-ios). The iOS conversation model (a main chat plus side chats) is replaced by projects and threads.
 
 ## Decisions
 
@@ -18,17 +24,30 @@ A calm, chat-first, native macOS client for a personal OpenClaw Gateway, matchin
 | Distribution | Local builds only for now. The app is App Sandbox ready so TestFlight or Developer ID can be added later. |
 | Repository | `kandotrun/oh-my-openclaw-macos`, public, English documentation and commits |
 | Bundle identifier | `run.kandot.oh-my-openclaw.mac` |
-| v0.1 scope | Parity with iOS v0.1 plus notifications. One main window. |
-| UI language | Japanese, like the iOS client |
+| v0.1 scope | T3 Code-style development client: projects and threads, work log, inspector, notifications for every thread. One main window. |
+| UI language | Japanese |
 
 ## Non-goals for v0.1
 
-- Quick Chat (menu bar presence with a global shortcut)
-- Multiple windows
-- Command palette and find in conversation
-- Bonjour discovery, one-click connection to a Gateway on the same Mac, TLS certificate pinning
+- A dedicated diff panel. Diffs appear inside work log entries.
+- A terminal, Git actions (commit, push, pull request), and a file browser
+- Command palette and slash-command completion
+- Child-session lineage views, a browser panel, multiple windows, Quick Chat
+- Bonjour discovery and TLS certificate pinning
 - Custom dictation (macOS system dictation works in the composer) and QR scanning
 - Node capabilities, Gateway installation or management, administration screens
+
+## T3 Code concepts on OpenClaw
+
+| T3 Code | OpenClaw Gateway |
+| --- | --- |
+| Project | `projects.list` record (`id`, `displayName`, `source`). Sessions outside a project are grouped under "No project". |
+| Thread | Session (`sessions.subscribe` roster). Project sessions work in their own managed checkout and branch. |
+| New worktree / current checkout | `projects.checkoutOptions` (`worktree`, `current`) and `sessions.create` |
+| Working state and elapsed time | `hasActiveRun` and `activeRunIds` on session rows |
+| Running thread subtitle | `sessions.messages.subscribe` with `mode: "narration"` (`session.narration` snapshots and tool identity) |
+| Work log | `agent` events with `stream: "tool"` for the selected thread, persisted tool records in `chat.history`, and full outputs through `chat.message.get` |
+| Approvals and questions | `exec.approval.*`, `plugin.approval.*`, `question.*` |
 
 ## Protocol facts this design relies on
 
@@ -40,128 +59,147 @@ Checked against OpenClaw `main` at `b1d355f` (2026-11-26, release 2026.11.10):
 - Device proofs keep the v2 signature payload, which the official Swift clients also still use for compatibility.
 - Loopback connections, including SSH port forwards, are silently approved on first pairing by default. LAN and Tailnet connections to the same host still require approval.
 - The reference client reconnects with backoff from 1 s up to 30 s and never retries automatically after a pairing or authentication refusal.
-- Under load, queued message notifications can collapse into one `sessions.changed` event whose top-level payload has `phase: "message"` and no `message`, `messageId`, or `messageSeq`. Clients refetch `chat.history` for the matching conversation. The iOS client at the copy source does not do this yet.
+- Under load, queued message notifications can collapse into one `sessions.changed` event whose top-level payload has `phase: "message"` and no `message`, `messageId`, or `messageSeq`. Clients refetch `chat.history` for the matching conversation. Milestone 1 implements this.
 
 ## Repository layout
 
 ```
 oh-my-openclaw-macos/
 ├── Package.swift                 # swift test targets
-├── project.yml                   # XcodeGen app target
+├── project.yml                   # XcodeGen app and UI test targets
 ├── justfile
+├── sgconfig.yml, rules/          # ast-grep layer rules
 ├── Sources/OhMyOpenClawCore/     # copied from iOS, same paths
 ├── App/
 │   ├── AppModel.swift            # copied from iOS, same paths (OhMyOpenClawState)
 │   ├── CredentialStore.swift     # copied from iOS, same paths (OhMyOpenClawState)
 │   ├── GatewayProfiles.swift     # copied from iOS, same paths (OhMyOpenClawState)
-│   ├── Platform/                 # new: Mac logic and system adapters (OhMyOpenClawPlatform)
-│   ├── Views/                    # new: SwiftUI
+│   ├── Platform/                 # Mac logic and system adapters (OhMyOpenClawPlatform)
+│   ├── Views/                    # SwiftUI
 │   └── OhMyOpenClawApp.swift
-├── Tests/
-│   ├── OhMyOpenClawCoreTests/    # copied
-│   ├── OhMyOpenClawStateTests/   # copied, without the iOS layout tests
-│   └── OhMyOpenClawPlatformTests/
+├── Tests/                        # Core, State, Platform suites
 ├── UITests/                      # demo smoke test
 └── scripts/                      # copied Gateway fixture and its tests
 ```
 
 - The first import commit is a verbatim copy and names the source commit. Shared files keep their iOS paths, so a fix in either repository can be ported with `git diff | git apply -3`.
-- History starts fresh. `README.md` and `THIRD_PARTY_NOTICES.md` record the provenance.
-- Not copied: iOS views, iOS input (dictation, QR scanning, UIKit image conversion), and `ChatLayout` with its tests.
 - The app target compiles `App/` directly. Swift package targets expose the same files to `swift test`, as in the iOS repository.
-
-## Changes to the copied shared layer
-
-All changes are test-first. The rest of `AppModel` stays unchanged so later iOS fixes remain easy to port.
-
-1. **Client identity.** Display name, version, platform, and device family move out of `GatewayClient.connect` into an injected value. The Mac app sends `Oh My OpenClaw`, its bundle version, `macos`, and `Mac`.
-2. **Keychain.** Credential items use the data protection keychain (`kSecUseDataProtectionKeychain`) with the service `run.kandot.oh-my-openclaw.mac.credentials`. This matches iOS semantics and avoids legacy keychain access prompts.
-3. **Collapsed message notifications.** A `sessions.changed` event with top-level `phase: "message"` and no `message`, `messageId`, or `messageSeq` schedules a history refresh when it targets the selected conversation.
-4. **Attention events (notifications milestone).** `AppModel` reports when the selected conversation's reply completes or fails, and when an approval or question arrives or resolves.
-
-## Mac components
-
-### Composer
-
-- An `NSTextView` subclass wrapped in `NSViewRepresentable`.
-  - Return sends.
-  - Shift-Return and Option-Return insert a newline.
-  - Return never sends while the input method has marked text (`hasMarkedText()`), so committing a Japanese conversion cannot send a message.
-- Grows from one to eight lines and shows a placeholder.
-- Pasted images and file URLs become attachments.
-- Key decisions live in a pure `ComposerKeyRouting` function with its own tests.
-
-### Connection supervisor
-
-- Keeps the connection open while the app runs, including after the main window closes.
-- Saves and disconnects before system sleep (`NSWorkspace.willSleepNotification`), and reconnects after wake.
-- Reconnects when the network path becomes satisfied (`NWPathMonitor`).
-- Retries failed connections with backoff from 1 s, doubling to at most 30 s.
-- Stops on pairing requests, authentication refusals, and user-initiated disconnects.
-- Decisions live in a pure `ReconnectPolicy` with tests. The supervisor calls existing `AppModel` methods (`foreground()`, `background()`, `retryConnection()`).
-
-### Notification coordinator
-
-- Posts user notifications only while the app is not frontmost: reply completed, reply failed, approval requested, question requested.
-- Clicking a notification activates the app and opens that conversation.
-- The Dock badge counts unseen replies plus pending approvals and questions. Opening the conversation clears its count.
-- Authorization is requested at the first send, and Settings has a switch to turn notifications off.
-- Decisions live in a pure `NotificationPolicy` with tests.
-
-### Attachment importer
-
-- File picker, drag and drop onto the conversation, and paste all produce `ChatAttachment` values.
-- Images are re-encoded as JPEG with ImageIO.
-- Size limits follow `hello-ok.policy.attachments`, as in iOS.
 
 ## User interface
 
-- **Main window.** One `Window` scene. Closing it keeps the app running, and clicking the Dock icon reopens it.
-- **`NavigationSplitView` sidebar.** Agent name, Gateway switcher, main chat, side chats with a "+" button, and search.
-- **Conversation.**
-  - Streaming assistant replies, tool activity, and stop.
-  - Markdown with code copy.
-  - Approval and question cards.
-  - Attachment previews through Quick Look, and older-history paging.
-- **Composer area.** Model and thinking-level menus, attach, and send or stop.
-- **When disconnected.** The conversation area shows the connection form: URL with token or password, or a pasted setup code. It also offers the local demo.
-- **Settings scene (Cmd-,).**
-  - Saved Gateways: add, rename, delete, switch, reconnect, disconnect.
-  - Notification switch and app version.
-- **Commands.** Cmd-N opens a new side chat, Cmd-. stops the reply, Cmd-Shift-R reconnects.
-- **Visual style.** Standard macOS 27 sidebar, toolbar, and materials, with minimal custom styling. The tone is the same quiet, chat-first style as iOS.
+The main window has three columns: sidebar, timeline, and inspector.
+
+### Sidebar
+
+- Threads are grouped by project, with "No project" last.
+- Each thread row shows:
+  - its title
+  - its state: working with elapsed time, needs approval, finished and unread, or error
+  - for a running thread, a one-line narration of the current step
+- A "Working" section lists every running thread. Idle threads older than the recent window collapse into "Settled".
+- Search filters thread titles.
+- A new-thread button sits on each project header.
+
+### Timeline
+
+- User messages are right-aligned bubbles. Assistant replies render as Markdown, with monospaced code blocks and copy.
+- Each turn's tool activity collapses into "Worked for N s". Expanding it lists each tool call with its kind, a one-line summary, its state, and its duration. Expanding a call shows its output or diff, with added and removed lines colored.
+- A running turn shows "Working for N s", a thinking indicator, and stop.
+- Approval and question cards appear in the timeline. Exec commands are shown in monospace, with allow once, allow always, and deny.
+
+### Composer
+
+- Multiline input. Return sends, and Shift-Return or Option-Return inserts a newline.
+- Return never sends while the input method has marked text, so committing a Japanese conversion cannot send.
+- Attachments come from the file picker, drag and drop, and paste.
+- One menu selects the model and thinking level, shown as "<model> <level>".
+- The composer also holds send and stop.
+
+### Inspector
+
+Toggled from the toolbar. It shows the project, branch and worktree, working directory, model, and run state of the selected thread.
+
+### New thread
+
+Choose a project. Choose "New worktree" or "Current checkout", as offered by `projects.checkoutOptions`. Choose a model. Send the first message, which creates the session.
+
+### Connection and settings
+
+- **Disconnected.** The timeline area shows the connection form: URL with token or password, or a pasted setup code. It also offers the local demo.
+- **Settings scene (Cmd-,).** Saved Gateways (add, rename, delete, switch, reconnect, disconnect), the notification switch, and the app version.
+
+### Commands
+
+- Cmd-N: new thread in the current project
+- Cmd-.: stop the running turn
+- Cmd-Shift-R: reconnect
+- Cmd-Option-I: toggle the inspector
+
+### Visual style
+
+Standard macOS 27 sidebar, toolbar, and materials. Typography is compact, with monospace for commands, paths, and diffs.
+
+## Changes to the copied shared layer
+
+All changes are test-first:
+
+1. **Client identity.** Done in milestone 1.
+2. **Data protection keychain.** Done in milestone 1.
+3. **Collapsed message notifications.** Done in milestone 1.
+4. **Work log projection.**
+   - Keep tool calls and results from history and live `tool` events as structured entries with id, kind, summary, arguments, state, timestamps, output, and diff.
+   - Keep the existing display rules for assistant and user text.
+5. **Roster activity.** Track `hasActiveRun`, `activeRunIds`, project, worktree, and last-activity time per session row for the sidebar, the inspector, and notifications.
+6. **Background narration.** Subscribe to running threads with `mode: "narration"` and keep the latest narration line per session.
+7. **Attention events.** Report when any thread's run completes or fails, and when an approval or question arrives or resolves.
+
+## Mac components
+
+- **Composer.** An `NSTextView` subclass wrapped in `NSViewRepresentable`. Key decisions live in a pure `ComposerKeyRouting` function with tests.
+- **Connection supervisor.**
+  - Keeps the connection open while the app runs, including after the main window closes.
+  - Before system sleep it saves and disconnects, and after wake it reconnects.
+  - It reconnects when the network path becomes satisfied.
+  - Retries back off from 1 s to at most 30 s. It stops on pairing requests, authentication refusals, and user-initiated disconnects. A pure `ReconnectPolicy` holds the decisions.
+- **Notification coordinator.**
+  - Posts notifications for thread completion, failure, approvals, and questions when the app is not frontmost or the thread is not selected.
+  - Clicking a notification opens the thread.
+  - The Dock badge counts unseen finished threads plus pending approvals and questions.
+  - A pure `NotificationPolicy` holds the decisions.
+- **Attachment importer.** File picker, drag and drop, and paste become `ChatAttachment` values. Images are re-encoded as JPEG with ImageIO, and limits follow `hello-ok.policy.attachments`.
 
 ## Error handling
 
-- `GatewayFailure` messages are shown as in iOS. Messages whose delivery is uncertain stay on the device and can be retried.
-- Connection state appears in the toolbar and in a banner above the conversation. A pairing request shows its request ID with the `openclaw devices list` and `openclaw devices approve <requestId>` steps.
-- Keychain failures use Mac wording.
+- `GatewayFailure` messages are shown inline. Messages whose delivery is uncertain stay on the device and can be retried.
+- Connection state appears in the toolbar and in a banner above the timeline. A pairing request shows its request ID with the `openclaw devices list` and `openclaw devices approve <requestId>` steps.
 
 ## Testing and tooling
 
-- **TDD with Swift Testing.**
-  - The copied Core and State suites must pass first.
-  - Every behavior change starts with a failing test.
-  - Mac logic lives in `OhMyOpenClawPlatform` and is tested as pure functions or state machines.
-- **UI smoke test.** An XCUITest connects to the demo, sends a message, and sees a reply. It runs locally through `just uitest`.
-- **Static checks.** ast-grep rules enforce layer boundaries: no AppKit, UIKit, or SwiftUI imports in the shared layer, and no iOS-only APIs in the app.
-- **`justfile` recipes.** `gen`, `build`, `test`, `uitest`, `run`, `lint`, `fixture`.
-- **CI.** GitHub Actions on the `xcode-27` runner runs the Python fixture tests, `swift test`, and an unsigned `xcodebuild` build.
-- **Local signing.** Local runs use automatic signing with the developer's own team. The data protection keychain and App Sandbox need a real signature. The team ID stays out of the repository and is passed to `just run`.
+- **TDD with Swift Testing.** Every behavior change starts with a failing test. Mac logic lives in `OhMyOpenClawPlatform` as pure functions or state machines.
+- **UI proof.** Each UI milestone runs the app against the demo or the loopback fixture and checks the result on screen. An XCUITest smoke test drives the demo.
+- **Static checks.** ast-grep rules enforce layer boundaries: no AppKit, UIKit, or SwiftUI in the shared layer, and no UIKit in the app.
+- **`justfile`.** Recipes for `gen`, `build`, `test`, `uitest`, `run`, `lint`, and `fixture`.
+- **CI.** GitHub Actions on the `xcode-27` runner runs the fixture tests, `swift test`, the ast-grep scan, and an unsigned `xcodebuild` build.
+- **Local signing.** Local runs can use ad-hoc signing for the demo. Real Gateways need automatic signing with the developer's team, because of the data protection keychain. The team ID stays out of the repository and is passed to `just run`.
 
 ## Milestones
 
 Each milestone is one pull request that leaves the repository working.
 
-1. **Shared layer.** Import Core, State, their tests, and the fixture. Add client identity, the data protection keychain, and the collapsed notification refresh. Add CI for the shared layer.
-2. **App skeleton.** XcodeGen project, sandbox entitlements, icon, main window with sidebar, connection form, demo, `justfile`, ast-grep rules, and CI build.
-3. **Conversation and composer.** Transcript, Markdown, attachments, approvals and questions, and the IME-safe composer.
-4. **Settings and commands.** Saved Gateway management, menu commands, connection banner, and pairing guidance.
+1. **Shared layer** (merged in #1). Core, State, tests, fixture, Mac identity, data protection keychain, collapsed notification refresh, CI.
+2. **App shell.**
+   - XcodeGen project, sandbox entitlements, and icon.
+   - Three-column window with a thread list and a read-only transcript.
+   - Connection form, demo, and Settings with saved Gateways.
+   - `justfile`, ast-grep rules, and the CI build.
+3. **Timeline and work log.** Work log projection, the work log and Markdown timeline, the IME-safe composer, attachments, and approvals and questions.
+4. **Threads and projects.** Project grouping, run state and elapsed time, Working and Settled sections, new thread with checkout choice, inspector, and narration.
 5. **Connection supervisor.** Sleep and wake, network changes, and backoff.
-6. **Notifications.** Attention events, notification policy, user notifications, Dock badge, and Settings switch.
+6. **Notifications.** Attention events for every thread, notification policy, user notifications, Dock badge, and the Settings switch.
 
 ## Risks
 
 - **IME.** Return handling must be verified with the Japanese input method on macOS 27. A pure key-routing function is not proof on its own.
 - **Data protection keychain.** It requires a signed build with an application identifier, so unsigned CI builds cannot exercise it. Tests use the existing `GatewayConnectionAccess` seam.
-- **Local network privacy.** LAN Gateways trigger the macOS local network permission. The app includes `NSLocalNetworkUsageDescription`. Loopback connections should not need it; verify on device.
+- **Local network privacy.** LAN Gateways trigger the macOS local network permission. The app includes `NSLocalNetworkUsageDescription`.
+- **Tool event shapes.** Tool event payloads vary by tool and runtime. The work log projection must fall back to a generic entry for unknown tools.
