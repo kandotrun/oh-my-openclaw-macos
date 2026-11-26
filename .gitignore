@@ -1,0 +1,15 @@
+.DS_Store
+.build/
+.swiftpm/
+*.xcodeproj/
+DerivedData/
+build/
+*.xcuserstate
+*.xcresult
+*.xcarchive
+*.dmg
+*.p12
+*.provisionprofile
+.env*
+artifacts/
+__pycache__/
