@@ -9,7 +9,7 @@ let package = Package(
         .target(name: "OhMyOpenClawCore"),
         // The app target compiles App/ directly; this target exposes the same files to swift test.
         .target(name: "OhMyOpenClawState", dependencies: ["OhMyOpenClawCore"], path: "App",
-                exclude: ["Platform"],
+                exclude: ["AppIcon.icon", "OhMyOpenClawApp.swift", "Platform", "PrivacyInfo.xcprivacy", "Views"],
                 sources: ["AppModel.swift", "CredentialStore.swift", "GatewayProfiles.swift"]),
         // Pure Mac logic; the app target compiles the same files directly.
         .target(name: "OhMyOpenClawPlatform", dependencies: ["OhMyOpenClawCore"], path: "App/Platform"),
