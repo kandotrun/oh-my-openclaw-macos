@@ -10,6 +10,7 @@ struct ComposerView: View {
     @State private var choosingFiles = false
     @State private var inputError: String?
     @State private var composing = false
+    @State private var pendingImports = 0
 
     private var isRunning: Bool { model.activity != .idle }
 
@@ -24,7 +25,13 @@ struct ComposerView: View {
                         .padding(.top, 3)
                         .allowsHitTesting(false)
                 }
-                ComposerTextView(text: $model.draftText, height: $height, isEditable: model.selectedSession != nil,
+                ComposerTextView(text: model.draftText, ownerID: model.composerContextID, height: $height,
+                                 isEditable: model.selectedSession != nil,
+                                 onTextChange: { value, owner in
+                                     // Edits made for a draft that is no longer selected are dropped.
+                                     guard owner == model.composerContextID else { return }
+                                     model.draftText = value
+                                 },
                                  onSend: send, onAttachFiles: attachFiles, onAttachImageData: attachImage,
                                  onCompositionChange: { composing = $0 })
                     .frame(height: height)
@@ -40,6 +47,7 @@ struct ComposerView: View {
                     Button { self.inputError = nil } label: { Image(systemName: "xmark") }.buttonStyle(.borderless)
                 }
                 Spacer()
+                if pendingImports > 0 { ProgressView().controlSize(.small).help("添付を読み込んでいます") }
                 if isRunning {
                     Button { Task { await model.stop() } } label: {
                         Image(systemName: "stop.fill").font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
@@ -52,10 +60,10 @@ struct ComposerView: View {
                 } else {
                     Button(action: send) {
                         Image(systemName: "arrow.up").font(.system(size: 12, weight: .bold)).foregroundStyle(.white)
-                            .frame(width: 26, height: 26).background(model.canSend ? Color.accentColor : Color.secondary.opacity(0.4), in: Circle())
+                            .frame(width: 26, height: 26).background(canSubmit ? Color.accentColor : Color.secondary.opacity(0.4), in: Circle())
                     }
                     .buttonStyle(.plain)
-                    .disabled(!model.canSend)
+                    .disabled(!canSubmit)
                     .help("送信 (Return)")
                     .accessibilityIdentifier("sendButton")
                 }
@@ -72,17 +80,25 @@ struct ComposerView: View {
         }
     }
 
+    /// Sending waits for attachments still being read, so a message never leaves without them.
+    private var canSubmit: Bool { model.canSend && pendingImports == 0 }
+
     private func send() {
-        guard model.canSend else { return }
+        guard canSubmit else { return }
         Task { await model.send() }
     }
 
+    private var imageLimit: Int { model.imageAttachmentLimit ?? AttachmentImport.imageLimit }
+
     private func attachFiles(_ urls: [URL]) {
         let context = model.composerContextID
+        let limit = imageLimit
+        pendingImports += 1
         Task {
+            defer { pendingImports -= 1 }
             for url in urls {
                 do {
-                    let loaded = try await Task.detached(priority: .userInitiated) { try AttachmentImport.file(url: url) }.value
+                    let loaded = try await Task.detached(priority: .userInitiated) { try AttachmentImport.file(url: url, imageLimit: limit) }.value
                     guard model.composerContextID == context else { inputError = "スレッドが切り替わったため、添付を中断しました。"; return }
                     model.addAttachment(data: loaded.data, fileName: loaded.fileName, mimeType: loaded.mimeType)
                 } catch { inputError = error.localizedDescription }
@@ -92,9 +108,12 @@ struct ComposerView: View {
 
     private func attachImage(_ data: Data, _ fileName: String) {
         let context = model.composerContextID
+        let limit = imageLimit
+        pendingImports += 1
         Task {
+            defer { pendingImports -= 1 }
             do {
-                let loaded = try await Task.detached(priority: .userInitiated) { try AttachmentImport.image(data: data, fileName: fileName) }.value
+                let loaded = try await Task.detached(priority: .userInitiated) { try AttachmentImport.image(data: data, fileName: fileName, limit: limit) }.value
                 guard model.composerContextID == context else { return }
                 model.addAttachment(data: loaded.data, fileName: loaded.fileName, mimeType: loaded.mimeType)
             } catch { inputError = error.localizedDescription }

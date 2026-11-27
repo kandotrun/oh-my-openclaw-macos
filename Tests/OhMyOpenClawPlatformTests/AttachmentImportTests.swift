@@ -81,3 +81,20 @@ private func pixelSize(_ data: Data) -> (Int, Int)? {
     defer { try? FileManager.default.removeItem(at: url) }
     #expect(throws: AttachmentImport.Failure.tooLarge) { try AttachmentImport.file(url: url, limit: 1024) }
 }
+
+@Test func aRecognizedImageFileThatCannotFitIsRejectedInsteadOfSentRaw() throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("photo-\(UUID().uuidString).png")
+    try encodedImage(width: 64, height: 64, type: .png).write(to: url)
+    defer { try? FileManager.default.removeItem(at: url) }
+    #expect(throws: AttachmentImport.Failure.tooLarge) { try AttachmentImport.file(url: url, imageLimit: 16) }
+}
+
+@Test func anImageTypeImageIOCannotDecodeTravelsAsAFile() throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("logo-\(UUID().uuidString).svg")
+    let svg = Data(#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>"#.utf8)
+    try svg.write(to: url)
+    defer { try? FileManager.default.removeItem(at: url) }
+    let loaded = try AttachmentImport.file(url: url, imageLimit: 16)
+    #expect(loaded.data == svg)
+    #expect(loaded.mimeType == "image/svg+xml")
+}

@@ -570,6 +570,9 @@ final class AppModel {
         } catch { errorMessage = "停止を確認できませんでした。接続を確認して、もう一度停止してください。" }
     }
 
+    /// The Gateway's per-image ceiling from hello-ok.policy, when it advertises one.
+    var imageAttachmentLimit: Int? { hello?.policy["attachments"]["maxImageBytes"].intValue }
+
     func addAttachment(data: Data, fileName: String, mimeType: String) {
         guard let id = store.selectedID else { return }
         let maxBytes = mimeType.hasPrefix("image/") ? hello?.policy["attachments"]["maxImageBytes"].intValue : hello?.policy["attachments"]["maxBytes"].intValue
