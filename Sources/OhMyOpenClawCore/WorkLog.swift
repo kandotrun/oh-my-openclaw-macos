@@ -45,5 +45,7 @@ public struct WorkLogPage: Sendable, Equatable {
     public var recordTimes: [String: Date] = [:]
     /// Runs that ended in a failure before replying.
     public var failedRuns: Set<String> = []
+    /// Every record id on the page, so rows from elsewhere (queued inputs, local sends) can be told apart.
+    public var records: Set<String> = []
     public init() {}
 }

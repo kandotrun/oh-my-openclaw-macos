@@ -17,6 +17,7 @@ public enum WorkLogProjection {
         }
         // Outcomes and times come from every record, including rows the transcript hides.
         for record in records {
+            page.records.insert(record.id)
             if let ms = record.value["__openclaw"]["recordTimestampMs"].numberValue ?? record.value["timestamp"].numberValue {
                 page.recordTimes[record.id] = Date(timeIntervalSince1970: ms / 1000)
             }
