@@ -60,9 +60,13 @@ enum AttachmentImport {
         guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { throw Failure.unreadable }
         guard data.count <= limit else { throw Failure.tooLarge }
         let type = UTType(filenameExtension: url.pathExtension)
-        // Decodable images must fit the image limit; formats ImageIO cannot read, such as SVG, travel as plain files.
-        if let type, type.conforms(to: .image), let source = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetCount(source) > 0 {
-            return try image(data: data, fileName: url.lastPathComponent, limit: imageLimit)
+        if let type, type.conforms(to: .image) {
+            // Decodable images must fit the image limit. Formats ImageIO cannot read, such as SVG,
+            // register as plain files, so the file limit and file wire type apply.
+            if let source = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetCount(source) > 0 {
+                return try image(data: data, fileName: url.lastPathComponent, limit: imageLimit)
+            }
+            return Loaded(data: data, fileName: url.lastPathComponent, mimeType: "application/octet-stream")
         }
         return Loaded(data: data, fileName: url.lastPathComponent, mimeType: type?.preferredMIMEType ?? "application/octet-stream")
     }

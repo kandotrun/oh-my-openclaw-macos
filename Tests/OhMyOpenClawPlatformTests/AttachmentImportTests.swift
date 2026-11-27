@@ -96,5 +96,7 @@ private func pixelSize(_ data: Data) -> (Int, Int)? {
     defer { try? FileManager.default.removeItem(at: url) }
     let loaded = try AttachmentImport.file(url: url, imageLimit: 16)
     #expect(loaded.data == svg)
-    #expect(loaded.mimeType == "image/svg+xml")
+    // Registered as a file, so the Gateway's file limit and file wire type apply.
+    #expect(loaded.mimeType == "application/octet-stream")
+    #expect(loaded.fileName.hasSuffix(".svg"))
 }

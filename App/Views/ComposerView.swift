@@ -10,7 +10,8 @@ struct ComposerView: View {
     @State private var choosingFiles = false
     @State private var inputError: String?
     @State private var composing = false
-    @State private var pendingImports = 0
+    /// Imports in progress per draft owner, so another thread's import never blocks this one.
+    @State private var pendingImports: [String: Int] = [:]
 
     private var isRunning: Bool { model.activity != .idle }
 
@@ -47,7 +48,7 @@ struct ComposerView: View {
                     Button { self.inputError = nil } label: { Image(systemName: "xmark") }.buttonStyle(.borderless)
                 }
                 Spacer()
-                if pendingImports > 0 { ProgressView().controlSize(.small).help("添付を読み込んでいます") }
+                if pendingImports[model.composerContextID, default: 0] > 0 { ProgressView().controlSize(.small).help("添付を読み込んでいます") }
                 if isRunning {
                     Button { Task { await model.stop() } } label: {
                         Image(systemName: "stop.fill").font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
@@ -80,8 +81,10 @@ struct ComposerView: View {
         }
     }
 
-    /// Sending waits for attachments still being read, so a message never leaves without them.
-    private var canSubmit: Bool { model.canSend && pendingImports == 0 }
+    private var canSubmit: Bool {
+        ComposerSubmitGate.allows(modelCanSend: model.canSend, composing: composing,
+                                  pendingImports: pendingImports[model.composerContextID, default: 0])
+    }
 
     private func send() {
         guard canSubmit else { return }
@@ -93,9 +96,9 @@ struct ComposerView: View {
     private func attachFiles(_ urls: [URL]) {
         let context = model.composerContextID
         let limit = imageLimit
-        pendingImports += 1
+        pendingImports[context, default: 0] += 1
         Task {
-            defer { pendingImports -= 1 }
+            defer { pendingImports[context, default: 1] -= 1 }
             for url in urls {
                 do {
                     let loaded = try await Task.detached(priority: .userInitiated) { try AttachmentImport.file(url: url, imageLimit: limit) }.value
@@ -109,9 +112,9 @@ struct ComposerView: View {
     private func attachImage(_ data: Data, _ fileName: String) {
         let context = model.composerContextID
         let limit = imageLimit
-        pendingImports += 1
+        pendingImports[context, default: 0] += 1
         Task {
-            defer { pendingImports -= 1 }
+            defer { pendingImports[context, default: 1] -= 1 }
             do {
                 let loaded = try await Task.detached(priority: .userInitiated) { try AttachmentImport.image(data: data, fileName: fileName, limit: limit) }.value
                 guard model.composerContextID == context else { return }
