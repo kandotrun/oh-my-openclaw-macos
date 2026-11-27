@@ -24,6 +24,15 @@ struct OhMyOpenClawApp: App {
                 .frame(minWidth: 900, minHeight: 560)
         }
         .defaultSize(width: 1180, height: 760)
+        .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("新しいスレッド") { Task { await delegate.model.newSideChat() } }
+                    .keyboardShortcut("n")
+                    .disabled(delegate.model.connectionState != .connected)
+                Button("再接続") { Task { await delegate.model.retryConnection() } }
+                    .keyboardShortcut("r", modifiers: [.command, .shift])
+            }
+        }
 
         Settings {
             SettingsView(model: delegate.model)

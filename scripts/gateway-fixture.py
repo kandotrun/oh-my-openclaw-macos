@@ -15,6 +15,10 @@ import threading
 import time
 import uuid
 
+# Question mode: the agent waits on one free-text answer in the main thread.
+QUESTION = {"id": "question-1", "status": "pending", "sessionKey": "agent:fixture:main", "agentId": "fixture",
+            "questions": [{"questionId": "base", "header": "Base branch", "question": "Which branch should I start from?"}]}
+
 
 class Client(socketserver.StreamRequestHandler):
     def handle(self):
@@ -128,6 +132,8 @@ class Client(socketserver.StreamRequestHandler):
             self.result(frame, {"subscribed": True, "list": payload} if method.endswith("subscribe") else payload)
         elif method == "sessions.messages.subscribe":
             self.result(frame, {"subscribed": True})
+        elif method == "question.list":
+            self.result(frame, {"questions": [QUESTION] if getattr(self.server, "question", False) else []})
         elif method == "sessions.create":
             key = "agent:fixture:dashboard:" + str(uuid.uuid4())
             row = {"key": key, "agentId": "fixture", "sessionId": str(uuid.uuid4()), "displayName": params.get("titleSource", "New chat")[:30]}
@@ -197,9 +203,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--pairing", action="store_true", help="reject every connect with a pairing request")
+    parser.add_argument("--question", action="store_true", help="hold one pending question in the main thread")
     options = parser.parse_args()
     with Server(("127.0.0.1", options.port), Client) as server:
         server.pairing = options.pairing
+        server.question = options.question
         server.sessions = {"agent:fixture:main": {"key": "agent:fixture:main", "agentId": "fixture", "sessionId": "fixture-main", "displayName": "Main"}}
         server.messages = {}
         print(server.server_address[1], flush=True)

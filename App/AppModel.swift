@@ -19,7 +19,12 @@ final class AppModel {
     var notice: String?
     var hasMoreHistory = false
     private var store = ConversationStore()
-    private var promptRecords: [ApprovalPrompt] = []
+    private var promptRecords: [ApprovalPrompt] = [] {
+        // An answer lives exactly as long as its prompt.
+        didSet { promptAnswers = promptAnswers.filter { id, _ in promptRecords.contains { $0.id == id } } }
+    }
+    /// Answers typed into open questions, kept across thread switches.
+    var promptAnswers: [String: String] = [:]
     private var promptTargets: [String: String] = [:]
     @ObservationIgnored private var resolvedPromptIDs = Set<String>()
     private var sendingTargets = Set<String>()
@@ -432,6 +437,13 @@ final class AppModel {
         agentNames[target.agentID] = name
     }
 
+    /// Sends only while the composer still shows `context`, so a send queued in one
+    /// thread never takes the draft of a thread chosen after it.
+    func send(expecting context: String) async {
+        guard composerContextID == context else { return }
+        await send()
+    }
+
     func send() async {
         guard canSend, let target = selectedSession else { return }
         if let existing = store.unresolvedSubmission(matching: store.selectedDraft, for: target) {
@@ -569,6 +581,9 @@ final class AppModel {
             try await refreshHistory(for: target)
         } catch { errorMessage = "停止を確認できませんでした。接続を確認して、もう一度停止してください。" }
     }
+
+    /// The Gateway's per-image ceiling from hello-ok.policy, when it advertises one.
+    var imageAttachmentLimit: Int? { hello?.policy["attachments"]["maxImageBytes"].intValue }
 
     func addAttachment(data: Data, fileName: String, mimeType: String) {
         guard let id = store.selectedID else { return }

@@ -36,6 +36,16 @@ struct ThreadSidebar: View {
         }
         .listStyle(.sidebar)
         .searchable(text: $search, placement: .sidebar, prompt: "スレッドを検索")
+        .toolbar {
+            ToolbarItem {
+                Button { Task { await model.newSideChat() } } label: {
+                    Label("新しいスレッド", systemImage: "square.and.pencil")
+                }
+                .help("新しいスレッド (⌘N)")
+                .disabled(model.connectionState != .connected || model.sessions.isEmpty)
+                .accessibilityIdentifier("newThreadButton")
+            }
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) { ConnectionStatusBar(model: model) }
     }
 }

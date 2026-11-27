@@ -182,3 +182,21 @@ private actor SubmissionGateway: GatewayServing {
     await app.stop()
     #expect(await service.aborts.first?["runId"].stringValue == running.id)
 }
+
+@Test @MainActor func sendQueuedInOneThreadNeverSendsAThreadChosenLater() async throws {
+    let service = SubmissionGateway()
+    let first = ChatSession(key: "agent:a:dashboard:first", agentID: "a", sessionID: "first-physical", title: "First")
+    let second = ChatSession(key: "agent:a:dashboard:second", agentID: "a", sessionID: "second-physical", title: "Second")
+    var store = ConversationStore()
+    store.upsertSession(first); store.upsertSession(second); store.selectedID = first.id
+    store.setDraft(ComposerDraft(text: "first draft"), for: first.id)
+    store.setDraft(ComposerDraft(text: "second draft"), for: second.id)
+    let app = AppModel(service: service, initialStore: store)
+    let queued = app.composerContextID
+    await app.selectSession(second)
+    await app.send(expecting: queued)
+    #expect(await service.sends.isEmpty)
+    #expect(app.draftText == "second draft")
+    await app.send(expecting: app.composerContextID)
+    #expect(await service.sends.first?["message"].stringValue == "second draft")
+}
