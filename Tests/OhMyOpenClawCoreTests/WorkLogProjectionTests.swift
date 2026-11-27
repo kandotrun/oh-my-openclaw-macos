@@ -19,6 +19,13 @@ private func result(_ id: String, call callID: String, run: String, at ms: Doubl
            extra: ["toolCallId": .string(callID), "isError": .bool(isError), "details": .object(details)])
 }
 
+/// OpenClaw's tool result records name their tool.
+private func named(_ value: JSONValue, _ tool: String) -> JSONValue {
+    guard case .object(var fields) = value else { return value }
+    fields["toolName"] = .string(tool)
+    return .object(fields)
+}
+
 /// A user prompt, an assistant turn that runs `swift test`, and its failing result.
 private let basePage: [JSONValue] = [
     record("u1", "user", at: 1000, content: .array([text("直して")])),
@@ -165,13 +172,57 @@ struct WorkLogProjectionTests {
 
     @Test func aCallAndItsResultOnDifferentPagesBecomeOneEntry() throws {
         let older = WorkLogProjection.project(messages: [basePage[1]], activity: .null, fallbackPrefix: "older:0")
-        let newer = WorkLogProjection.project(messages: [basePage[2]], activity: .null, fallbackPrefix: "history")
+        let newer = WorkLogProjection.project(messages: [named(basePage[2], "exec")], activity: .null, fallbackPrefix: "history")
         let merged = newer.adding(older: older)
         let entry = try #require(merged.entries["a1"]?.first)
         #expect(entry.summary == "swift test")
         #expect(entry.output == "1 failure")
         #expect(entry.state == .failed)
         #expect(merged.entries["t1"]?.isEmpty ?? true)
+    }
+
+    @Test func aRefreshAfterLoadingOlderHistoryKeepsTheJoinedEntry() throws {
+        let older = WorkLogProjection.project(messages: [basePage[1]], activity: .null, fallbackPrefix: "older:0")
+        let newest = WorkLogProjection.project(messages: [named(basePage[2], "exec")], activity: .null, fallbackPrefix: "history")
+        let refreshed = newest.adding(older: newest.adding(older: older))
+        #expect(refreshed.entries["a1"]?.count == 1)
+        #expect(refreshed.entries["a1"]?.first?.output == "1 failure")
+        #expect(refreshed.entries["t1"]?.isEmpty ?? true)
+    }
+
+    @Test func aReportedOutcomeSurvivesJoiningAcrossPages() throws {
+        let older = WorkLogProjection.project(messages: [basePage[1]], activity: .null, fallbackPrefix: "older:0")
+        let activity: JSONValue = .array([.object(["messageId": .string("t1"), "items": .array([.object([
+            "kind": .string("tool"), "toolCallId": .string("c1"), "status": .string("completed"),
+        ])])])])
+        let newer = WorkLogProjection.project(messages: [named(basePage[2], "exec")], activity: activity, fallbackPrefix: "history")
+        #expect(try #require(newer.adding(older: older).entries["a1"]?.first).state == .completed)
+    }
+
+    @Test func aSubagentThatFailedToStartOnTheNextPageIsNotCountedAsStarted() throws {
+        let spawn = record("a1", "assistant", run: "r1", content: .array([call("c1", "sessions_spawn", ["task": .string("fix it")])]))
+        let older = WorkLogProjection.project(messages: [spawn], activity: .null, fallbackPrefix: "older:0")
+        let failure = named(result("t1", call: "c1", run: "r1", at: 2, output: "spawn failed", isError: true), "sessions_spawn")
+        let newer = WorkLogProjection.project(messages: [failure], activity: .null, fallbackPrefix: "history")
+        #expect(try #require(newer.adding(older: older).entries["a1"]?.first).kind == .other)
+    }
+
+    @Test func commentaryIsNotAFinalReply() {
+        // The Gateway splits commentary out of an assistant record into a row of its own with the same id.
+        let commentary = record("a1", "assistant", run: "r1", at: 3000, content: .array([text("確認します。")]), extra: [
+            "openclawStreamFallback": .object(["replacementText": .string("確認します。"), "source": .string("segment"), "itemId": .string("msg_1")]),
+        ])
+        let calls = record("a1", "assistant", run: "r1", at: 3000, content: .array([call("c1", "exec", ["command": .string("swift test")])]))
+        let page = [basePage[0], commentary, calls, basePage[2], record("a2", "assistant", run: "r1", at: 28000, content: .array([text("直しました。")]))]
+        #expect(WorkLogProjection.project(messages: page, activity: .null, fallbackPrefix: "history").finalReplies == ["a2"])
+    }
+
+    @Test func aCodexPatchShowsEveryFileItChanged() throws {
+        let change = { (path: String) -> JSONValue in .object(["path": .string(path), "diff": .string("@@ -1 +1 @@\n-x\n+y")]) }
+        let page = [record("a1", "assistant", run: "r1", content: .array([call("c1", "apply_patch", ["changes": .array([change("a.swift"), change("b.swift")])])]))]
+        let diff = try #require(WorkLogProjection.project(messages: page, activity: .null, fallbackPrefix: "history").entries["a1"]?.first?.diff)
+        #expect(diff.files == ["a.swift", "b.swift"])
+        #expect(diff.stat == ToolDiff.Stat(added: 2, removed: 2))
     }
 
     @Test func finalRepliesAreAssistantTextWithoutCalls() {

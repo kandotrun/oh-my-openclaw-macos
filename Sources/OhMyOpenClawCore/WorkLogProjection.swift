@@ -34,7 +34,8 @@ public enum WorkLogProjection {
             let run = value["__openclaw"]["runId"].stringValue ?? value["runId"].stringValue
             let blocks = value["content"].arrayValue ?? []
             if startsTurn(value, role: role, blocks: blocks) { turn += 1; page.turnStarts.insert(record.id) }
-            if role == "assistant", !blocks.contains(where: { callTypes.contains(type($0)) }),
+            // Commentary rows narrate the work, so they never answer the turn.
+            if role == "assistant", value["openclawStreamFallback"] == .null, !blocks.contains(where: { callTypes.contains(type($0)) }),
                !(value["stopReason"].stringValue ?? "").lowercased().hasPrefix("tool") {
                 page.finalReplies.insert(record.id)
             }
@@ -55,11 +56,8 @@ public enum WorkLogProjection {
             }
         }
         overlay(activity, on: &page)
-        // A sub-agent that failed, was blocked, or was skipped did no work of its own.
         for (anchor, entries) in page.entries {
-            for index in entries.indices where entries[index].kind == .subagent && [.failed, .blocked, .skipped].contains(entries[index].state) {
-                page.entries[anchor]![index].kind = .other
-            }
+            for index in entries.indices { page.entries[anchor]![index].settleKind() }
         }
         return page
     }
@@ -93,9 +91,13 @@ public enum WorkLogProjection {
                                  summary: ToolActivityClassifier.summary(kind: kind, args: call.args), anchorRecordID: anchor)
         entry.command = kind == .command ? call.args["command"].stringValue : nil
         if let envelope = call.args["input"].stringValue { entry.diff = ToolDiff.patchEnvelope(envelope) }
-        if entry.diff == nil, let change = call.args["changes"].arrayValue?.first, let text = change["diff"].stringValue {
-            let stat = change["stat"]["added"].intValue.flatMap { added in change["stat"]["removed"].intValue.map { ToolDiff.Stat(added: added, removed: $0) } }
-            entry.diff = ToolDiff.unified(text, path: change["path"].stringValue ?? "", stat: stat, truncated: change["diffTruncated"].boolValue == true)
+        if entry.diff == nil, let changes = call.args["changes"].arrayValue {
+            entry.diff = ToolDiff.joined(changes.compactMap { change in
+                change["diff"].stringValue.flatMap { text in
+                    let stat = change["stat"]["added"].intValue.flatMap { added in change["stat"]["removed"].intValue.map { ToolDiff.Stat(added: added, removed: $0) } }
+                    return ToolDiff.unified(text, path: change["path"].stringValue ?? "", stat: stat, truncated: change["diffTruncated"].boolValue == true)
+                }
+            })
         }
         return entry
     }

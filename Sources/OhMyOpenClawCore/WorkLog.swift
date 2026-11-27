@@ -38,6 +38,13 @@ public struct WorkLogEntry: Sendable, Equatable, Identifiable {
     }
 }
 
+extension WorkLogEntry {
+    /// A sub-agent that failed, was blocked, or was skipped did no work of its own.
+    mutating func settleKind() {
+        if kind == .subagent && [.failed, .blocked, .skipped].contains(state) { kind = .other }
+    }
+}
+
 /// The work log projected from one `chat.history` page, keyed by transcript record id.
 public struct WorkLogPage: Sendable, Equatable {
     /// Entries in block order under the record that anchors them.
@@ -66,17 +73,18 @@ public struct WorkLogPage: Sendable, Equatable {
         for (anchor, list) in merged.entries {
             for orphan in list where !orphan.hasCall {
                 guard let (callAnchor, index) = merged.entries.lazy.compactMap({ key, entries in
-                    entries.firstIndex { $0.hasCall && $0.resultRecordID == nil && $0.toolCallID == orphan.toolCallID
-                        && ($0.runID == nil || orphan.runID == nil || $0.runID == orphan.runID) }.map { (key, $0) }
+                    // A refresh brings the orphan back after an earlier join, so the joined call matches again.
+                    entries.firstIndex { $0.hasCall && ($0.resultRecordID == nil || $0.resultRecordID == orphan.resultRecordID)
+                        && $0.toolCallID == orphan.toolCallID && ($0.runID == nil || orphan.runID == nil || $0.runID == orphan.runID) }.map { (key, $0) }
                 }).first else { continue }
                 var call = merged.entries[callAnchor]![index]
-                // The orphan did not know the tool, so a shell's exit code decides again.
-                let shellFailed = ToolActivityClassifier.isShell(call.name) && (orphan.exitCode ?? 0) != 0
-                call.state = orphan.state == .completed && shellFailed ? .failed : orphan.state
+                // The result record names its tool, so the orphan's state already counts a shell's exit code.
+                call.state = orphan.state
                 call.output = orphan.output; call.outputTruncated = orphan.outputTruncated
                 call.exitCode = orphan.exitCode; call.durationMs = orphan.durationMs ?? call.durationMs
                 call.diff = orphan.diff ?? call.diff; call.resultRecordID = orphan.resultRecordID
                 if call.title == nil { call.title = orphan.title }
+                call.settleKind()
                 merged.entries[callAnchor]![index] = call
                 merged.entries[anchor]?.removeAll { $0.id == orphan.id }
             }

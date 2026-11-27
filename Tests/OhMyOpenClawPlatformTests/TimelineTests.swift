@@ -16,6 +16,10 @@ private func call(_ id: String, _ name: String, _ args: [String: JSONValue]) -> 
 private func result(_ id: String, call callID: String, at seconds: Double) -> JSONValue {
     record(id, "toolResult", run: "r1", at: seconds, content: [text("ok")], extra: ["toolCallId": .string(callID)])
 }
+private func failure(_ id: String, call callID: String, at seconds: Double) -> JSONValue {
+    record(id, "toolResult", run: "r1", at: seconds, content: [text("1 failure")], extra: ["toolCallId": .string(callID), "isError": .bool(true)])
+}
+private let image: JSONValue = .object(["type": .string("image"), "url": .string("/api/chat/media/outgoing/a/1/full"), "mimeType": .string("image/png")])
 
 /// A prompt, a reply that runs `swift test`, a silent read, and the final answer 27 seconds after the prompt.
 private let settled: [JSONValue] = [
@@ -111,11 +115,32 @@ struct TimelineTests {
             record("u1", "user", at: 1, content: [text("直して")]),
             record("a1", "assistant", run: "r1", at: 2, content: [text("確認します。"), call("c1", "exec", ["command": .string("swift test")])]),
             record("a2", "assistant", run: "r1", at: 3, content: [text("直しました。")]),
-            record("t1", "toolResult", run: "r1", at: 4, content: [text("1 failure")], extra: ["toolCallId": .string("c1"), "isError": .bool(true)]),
+            failure("t1", call: "c1", at: 4),
         ]
-        let items = shape(build(records))
-        #expect(items.contains("entry c1"))
-        #expect(!items.contains { $0.hasPrefix("fold") && $0.contains("c1") })
+        #expect(shape(build(records)) == ["message 直して", "message 確認します。", "message 直しました。", "entry c1"])
+    }
+
+    @Test func aFailureAfterAnImageOnlyAnswerStaysInView() {
+        let records = [
+            record("u1", "user", at: 1, content: [text("描いて")]),
+            record("a1", "assistant", run: "r1", at: 2, content: [text("描きます。"), call("c1", "exec", ["command": .string("render")])]),
+            record("m1", "assistant", run: "r1", at: 3, content: [image]),
+            failure("t1", call: "c1", at: 4),
+        ]
+        #expect(shape(build(records)) == ["message 描いて", "message 描きます。", "message ", "entry c1"])
+    }
+
+    @Test func lateFailuresWithALateSuccessBetweenThemStaySeparate() {
+        let records = [
+            record("u1", "user", at: 1, content: [text("直して")]),
+            record("a1", "assistant", run: "r1", at: 2, content: [text("確認します。"), call("c1", "exec", ["command": .string("swift test")]),
+                                                             call("c2", "read", ["path": .string("a.swift")]), call("c3", "exec", ["command": .string("swift build")])]),
+            record("a2", "assistant", run: "r1", at: 3, content: [text("直しました。")]),
+            failure("t1", call: "c1", at: 4),
+            result("t2", call: "c2", at: 5),
+            failure("t3", call: "c3", at: 6),
+        ]
+        #expect(shape(build(records)) == ["message 直して", "fold 5秒作業しました [message 確認します。; entry c2]", "message 直しました。", "entry c1", "entry c3"])
     }
 
     @Test func commentaryBeforeACallIsNotTheAnswer() {

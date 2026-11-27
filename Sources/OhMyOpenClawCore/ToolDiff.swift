@@ -92,6 +92,16 @@ public struct ToolDiff: Sendable, Equatable {
         return make(lines, incomplete: truncated, files: [path], provided: provided, requiresChange: provided == nil)
     }
 
+    /// Several files' diffs as one, as a Codex patch reports them. The stat needs every file's.
+    public static func joined(_ diffs: [ToolDiff]) -> ToolDiff? {
+        guard diffs.count > 1 else { return diffs.first }
+        let stats = diffs.compactMap(\.stat)
+        let stat = stats.count == diffs.count ? Stat(added: stats.reduce(0) { $0 + $1.added }, removed: stats.reduce(0) { $0 + $1.removed }) : nil
+        var joined = ToolDiff(lines: diffs.flatMap(\.lines), stat: stat, files: diffs.flatMap(\.files))
+        joined.isClipped = joined.isClipped || diffs.contains(where: \.isClipped)
+        return joined
+    }
+
     private static func rows(_ text: String) -> [String] {
         text.split(separator: "\n", omittingEmptySubsequences: false).map { String($0.hasSuffix("\r") ? $0.dropLast() : $0) }
     }

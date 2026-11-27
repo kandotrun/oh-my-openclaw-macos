@@ -391,7 +391,7 @@ public struct ConversationStore: Codable, Sendable {
             let kept = activeRunIDs[target.id] == runID ? activities[target.id].flatMap { [.searching, .waitingForApproval].contains($0) ? $0 : nil } : nil
             activeRunIDs[target.id] = runID
             let text = inflight["text"].stringValue ?? ""
-            activities[target.id] = text.isEmpty ? kept ?? .working : .responding
+            activities[target.id] = kept ?? (text.isEmpty ? .working : .responding)
             if !text.isEmpty { rows.append(ChatMessage(id: runID + ":assistant", role: .assistant, text: text, delivery: .pending, runID: runID)) }
         } else {
             activeRunIDs[target.id] = nil; activities[target.id] = .idle

@@ -45,7 +45,8 @@ struct TimelineInput {
 /// Turns, folds, and groups for the transcript, after T3 Code's timeline.
 enum Timeline {
     /// Units keep their row position, so a call whose result lands late is placed by that result.
-    private enum Unit { case message(ChatMessage, order: Int), entry(WorkLogEntry, order: Int), gap }
+    /// A gap stands where a unit went to the other list, at that unit's position.
+    private enum Unit { case message(ChatMessage, order: Int), entry(WorkLogEntry, order: Int), gap(order: Int) }
     private struct Turn { var prompt: ChatMessage?; var units: [Unit] = [] }
 
     static func build(_ input: TimelineInput) -> [TimelineItem] {
@@ -103,10 +104,10 @@ enum Timeline {
         if let active = input.activeRunID, runs.contains(active) { return head + grouped(turn.units, input: input, live: true) }
         // Settled: fold the work, and keep the answer, people, images, and late problems in view.
         let terminal = turn.units.last { unit in
-            guard case .message(let row, _) = unit, row.role == .assistant, !row.text.isEmpty else { return false }
+            guard case .message(let row, _) = unit, row.role == .assistant, !row.text.isEmpty || !row.attachments.isEmpty else { return false }
             guard let page = input.page, let source = row.sourceID, page.records.contains(source) else { return true }
             return page.finalReplies.contains(source)
-        }.flatMap(order)
+        }.map(order)
         var folded: [Unit] = [], shown: [Unit] = []
         for unit in turn.units {
             let keep: Bool = switch unit {
@@ -117,22 +118,25 @@ enum Timeline {
             case .gap: false
             }
             // A row that leaves one list breaks the groups in the other.
-            if keep { shown.append(unit); folded.append(.gap) } else { folded.append(unit); shown.append(.gap) }
+            if keep { shown.append(unit); folded.append(.gap(order: order(unit))) } else { folded.append(unit); shown.append(.gap(order: order(unit))) }
         }
         guard folded.contains(where: { if case .entry = $0 { true } else { false } }) else {
-            return head + grouped(turn.units, input: input, live: false)
+            return head + grouped(chronological(turn.units), input: input, live: false)
         }
         let fold = TurnFold(id: "fold|" + (turn.prompt?.id ?? entries[0].id), label: label(turn, entries: entries, input: input),
                             items: grouped(folded, input: input, live: false))
-        let ordered = shown.enumerated().sorted { (order($0.element) ?? $0.offset, $0.offset) < (order($1.element) ?? $1.offset, $1.offset) }.map(\.element)
-        return head + [.fold(fold)] + grouped(ordered, input: input, live: false)
+        return head + [.fold(fold)] + grouped(chronological(shown), input: input, live: false)
     }
 
-    private static func order(_ unit: Unit) -> Int? {
+    private static func order(_ unit: Unit) -> Int {
         switch unit {
-        case .message(_, let position), .entry(_, let position): position
-        case .gap: nil
+        case .message(_, let position), .entry(_, let position), .gap(let position): position
         }
+    }
+
+    /// Late results move after the rows they followed; ties keep their turn order.
+    private static func chronological(_ units: [Unit]) -> [Unit] {
+        units.enumerated().sorted { (order($0.element), $0.offset) < (order($1.element), $1.offset) }.map(\.element)
     }
 
     /// Consecutive calls of one run form a group; in a running turn the trailing calls stay a live group.

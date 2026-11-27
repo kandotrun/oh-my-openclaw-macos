@@ -293,11 +293,14 @@ private func chat(_ state: String, run: String = "run", session: ChatSession = m
     var store = ConversationStore()
     store.upsertSession(session)
     store.activeRunIDs[session.id] = "r1"; store.activities[session.id] = .searching
-    let page = { (run: String) -> JSONValue in
-        .object(["sessionId": .string("physical"), "messages": .array([]), "inFlightRun": .object(["runId": .string(run), "text": .string("")])])
+    let page = { (run: String, text: String) -> JSONValue in
+        .object(["sessionId": .string("physical"), "messages": .array([]), "inFlightRun": .object(["runId": .string(run), "text": .string(text)])])
     }
-    store.applyHistory(page("r1"), for: session)
+    store.applyHistory(page("r1", ""), for: session)
     #expect(store.activities[session.id] == .searching)
-    store.applyHistory(page("r2"), for: session)
+    // Text streamed before the search does not end it.
+    store.applyHistory(page("r1", "調べます。"), for: session)
+    #expect(store.activities[session.id] == .searching)
+    store.applyHistory(page("r2", ""), for: session)
     #expect(store.activities[session.id] == .working)
 }
