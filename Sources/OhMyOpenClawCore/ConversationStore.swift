@@ -30,6 +30,8 @@ public struct ConversationStore: Codable, Sendable {
     public var creationIssuedAt: [String: Date]?
     public var activeRunIDs: [String: String] = [:]
     public var activities: [String: ActivityState] = [:]
+    /// The last profile this Gateway named as the viewer, so saved rows stay on the right side while reconnecting.
+    public var viewerProfileID: String?
     private var runSequences: [String: Int] = [:]
     private var settledRunTargets: [String: ChatSession]?
     private var draftRevisions: [String: Int]?
@@ -437,7 +439,8 @@ public struct ConversationStore: Codable, Sendable {
         let id = metadata["id"].stringValue ?? value["id"].stringValue ?? fallbackID
         let runID = metadata["runId"].stringValue ?? value["runId"].stringValue
         let idempotencyKey = metadata["idempotencyKey"].stringValue ?? value["idempotencyKey"].stringValue
-        return ChatMessage(id: id, role: content.role, text: content.text, attachments: content.attachments, runID: runID, sourceID: id, idempotencyKey: idempotencyKey, isToolMessage: content.isToolMessage ? true : nil)
+        return ChatMessage(id: id, role: content.role, text: content.text, attachments: content.attachments, runID: runID, sourceID: id, idempotencyKey: idempotencyKey, isToolMessage: content.isToolMessage ? true : nil,
+                           sender: content.role == .user ? MessageSender.parse(value) : nil)
     }
 
     /// A durable record may project to several rows. Keep record identity apart from display identity.

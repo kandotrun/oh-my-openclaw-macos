@@ -5,6 +5,10 @@ Protocol behavior is implemented against that source snapshot; OpenClaw is an in
 
 Source: https://github.com/openclaw/openclaw/blob/a8a7ce94eb544f3c39cf25f674471c3f1e3fe4ab/apps/shared/OpenClawKit/Sources/OpenClawKit/DeviceAuthPayload.swift
 
+The shared-session attribution rules follow the OpenClaw Control UI at commit `b1d355fcc9fcf91a4514c2612ce7b33211c710b6`: sender identity validation, the rule for which rows are the viewer's own, and the avatar hue and initials. The same license applies.
+
+Sources: `src/chat/sender-identity.ts`, `ui/src/lib/chat/sender-label.ts`, `ui/src/pages/chat/components/chat-message-sender.ts`, and `ui/src/lib/identity-avatar.ts` in https://github.com/openclaw/openclaw/tree/b1d355fcc9fcf91a4514c2612ce7b33211c710b6
+
 MIT License
 
 Copyright (c) 2026 OpenClaw Foundation
