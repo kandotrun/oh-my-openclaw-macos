@@ -10,10 +10,12 @@ struct TranscriptView: View {
     @State private var followsBottom = true
     @State private var userScrolling = false
     @State private var nearBottom = true
+    private static let bottomID = "transcriptBottom"
 
     var body: some View {
         VStack(spacing: 0) {
             banner
+            ScrollViewReader { proxy in
             ScrollView {
                 // Loaded history is paged, so measuring every row keeps bottom anchoring exact.
                 VStack(alignment: .leading, spacing: 18) {
@@ -46,6 +48,7 @@ struct TranscriptView: View {
                     if model.activity != .idle {
                         WorkingIndicator(activity: model.activity, since: runStartedAt ?? .now)
                     }
+                    Color.clear.frame(height: 1).id(Self.bottomID)
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 20)
@@ -65,6 +68,13 @@ struct TranscriptView: View {
                 if phase == .idle && userScrolling { followsBottom = nearBottom }
                 userScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
             }
+            // Equal-height transcripts keep their offset across a switch, so scroll explicitly.
+            .task(id: model.selectedSession?.id) {
+                followsBottom = true
+                await Task.yield()
+                proxy.scrollTo(Self.bottomID, anchor: .bottom)
+            }
+            }
             ComposerView(model: model)
                 .frame(maxWidth: 820)
                 .padding(.horizontal, 24)
@@ -76,7 +86,6 @@ struct TranscriptView: View {
         }
         .onChange(of: model.selectedSession?.id) { _, _ in
             runStartedAt = model.activity == .idle ? nil : .now
-            followsBottom = true
         }
     }
 

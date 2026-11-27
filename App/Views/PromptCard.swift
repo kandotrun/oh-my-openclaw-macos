@@ -21,7 +21,7 @@ struct PromptCard: View {
             if prompt.choices.isEmpty {
                 HStack {
                     if prompt.kind == "secret" { SecureField("回答を入力", text: $answer) } else { TextField("回答を入力", text: $answer) }
-                    Button("回答する") { let value = answer; answer = ""; resolve(value) }
+                    Button("回答する") { resolve(answer) }
                         .disabled(answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 .textFieldStyle(.roundedBorder)
