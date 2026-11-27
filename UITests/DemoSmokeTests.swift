@@ -160,6 +160,29 @@ final class DemoSmokeTests: XCTestCase {
         XCTAssertEqual(answer.value as? String, "Start from main")
     }
 
+    /// `just uitest` starts scripts/gateway-fixture.py --access, which sends upgrades without a
+    /// Cloudflare Access service token to a login page, as a Gateway behind Access does.
+    @MainActor
+    func testServiceTokenGetsThroughCloudflareAccess() throws {
+        guard let fixture = ProcessInfo.processInfo.environment["OHMYOPENCLAW_ACCESS_FIXTURE"] else {
+            throw XCTSkip("Run through `just uitest`, which starts the access fixture.")
+        }
+        let app = launchIsolatedApp()
+        connect(app, to: fixture)
+        XCTAssertTrue(text(containing: "Cloudflare Access のログイン", in: app).waitForExistence(timeout: 15))
+        let clientID = app.textFields["accessClientID"]
+        clientID.click()
+        clientID.typeText("fixture-access.access")
+        let clientSecret = app.secureTextFields["accessClientSecret"]
+        clientSecret.click()
+        clientSecret.typeText("fixture-access-secret")
+        let token = app.secureTextFields["connectionSecret"]
+        token.click()
+        token.typeText("synthetic-token")
+        app.buttons["connectButton"].click()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "mainThreadRow").firstMatch.waitForExistence(timeout: 15))
+    }
+
     /// `just uitest` starts scripts/gateway-fixture.py --shared, whose main thread holds a teammate's message.
     /// The fixture names this connection's profile in `hello-ok` and stamps it on every send.
     @MainActor

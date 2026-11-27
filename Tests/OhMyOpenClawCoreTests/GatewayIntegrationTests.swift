@@ -98,5 +98,35 @@ struct GatewayIntegrationTests {
         }
         await client.disconnect()
     }
+
+    @Test("A Gateway behind Cloudflare Access admits only upgrades that carry the service token")
+    func accessProtectedUpgrade() async throws {
+        let fixture = Process()
+        let output = Pipe()
+        let script = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("scripts/gateway-fixture.py")
+        fixture.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        fixture.arguments = [script.path, "--access"]
+        fixture.standardOutput = output
+        fixture.standardError = FileHandle.standardError
+        try fixture.run()
+        defer { fixture.terminate(); fixture.waitUntilExit() }
+        let portData = output.fileHandleForReading.availableData
+        let port = try #require(Int(String(decoding: portData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)))
+        let endpoint = URL(string: "ws://127.0.0.1:\(port)")!
+
+        let blocked = GatewayClient(endpoint: endpoint, credentials: GatewayCredentials(token: "synthetic-bootstrap"), identity: DeviceIdentity())
+        do {
+            _ = try await blocked.connect()
+            Issue.record("An upgrade without the service token must not connect")
+        } catch let failure as GatewayFailure {
+            #expect(failure.code == "ACCESS_REQUIRED")
+        }
+
+        let token = try #require(CloudflareAccessToken(clientID: "fixture-access.access", clientSecret: "fixture-access-secret"))
+        let admitted = GatewayClient(endpoint: endpoint, credentials: GatewayCredentials(token: "synthetic-bootstrap", access: token), identity: DeviceIdentity())
+        let hello = try await admitted.connect()
+        #expect(hello.payload["protocol"].intValue == 4)
+        await admitted.disconnect()
+    }
 }
 #endif

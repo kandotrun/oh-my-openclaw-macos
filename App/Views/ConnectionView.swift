@@ -10,6 +10,8 @@ struct ConnectionView: View {
     @State private var usePassword = false
     @State private var setupCode = ""
     @State private var useSetupCode = false
+    @State private var accessClientID = ""
+    @State private var accessClientSecret = ""
 
     private var isConnecting: Bool { model.changingConnection || model.connectionState == .connecting }
     private var canSubmit: Bool {
@@ -47,10 +49,24 @@ struct ConnectionView: View {
                         SecureField(usePassword ? "パスワード" : "トークン", text: $secret)
                             .accessibilityIdentifier("connectionSecret")
                     }
+                    if !useSetupCode {
+                        Section {
+                            TextField("Client ID", text: $accessClientID, prompt: Text("任意"))
+                                .autocorrectionDisabled()
+                                .accessibilityIdentifier("accessClientID")
+                            SecureField("Client Secret", text: $accessClientSecret, prompt: Text("任意"))
+                                .accessibilityIdentifier("accessClientSecret")
+                        } header: {
+                            Text("Cloudflare Access")
+                        } footer: {
+                            Text("Gateway を Cloudflare Access で保護している場合は、サービストークンを入力します。保存済みのトークンは空欄のまま引き継ぎます。")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
                 }
                 .formStyle(.grouped)
                 .scrollDisabled(true)
-                .frame(minHeight: useSetupCode ? 170 : 230)
+                .frame(minHeight: useSetupCode ? 170 : 400)
 
                 HStack(spacing: 12) {
                     Button(isConnecting ? "接続中…" : "Gateway に接続", action: submit)
@@ -80,10 +96,14 @@ struct ConnectionView: View {
     private func submit() {
         let submittedURL = urlText, submittedSecret = secret, submittedAlias = alias
         let submittedCode = useSetupCode ? setupCode : "", submittedPassword = usePassword
+        let submittedAccess = useSetupCode ? nil : CloudflareAccessToken(clientID: accessClientID, clientSecret: accessClientSecret)
+        let submittedAccessSecret = accessClientSecret
         Task {
-            await model.connect(urlText: submittedURL, secret: submittedSecret, password: submittedPassword, setupCode: submittedCode, alias: submittedAlias)
+            await model.connect(urlText: submittedURL, secret: submittedSecret, password: submittedPassword, setupCode: submittedCode,
+                                alias: submittedAlias, access: submittedAccess)
             if secret == submittedSecret { secret = "" }
             if setupCode == submittedCode { setupCode = "" }
+            if accessClientSecret == submittedAccessSecret { accessClientSecret = "" }
         }
     }
 

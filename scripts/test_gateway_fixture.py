@@ -131,6 +131,13 @@ class FixtureConcurrencyTests(unittest.TestCase):
         self.assertEqual(reply["content"][0]["text"], "Thanks, I'll review it.")
         self.assertEqual(reply["__openclaw"]["senderIdentity"], {"type": "profile", "id": "fixture-peer"})
 
+    def test_access_mode_sends_an_upgrade_without_the_service_token_to_a_login_page(self):
+        self.assertIsNone(fixture.access_refusal({}, required=False))
+        refusal = fixture.access_refusal({"cf-access-client-id": fixture.ACCESS_TOKEN["cf-access-client-id"]}, required=True)
+        self.assertTrue(refusal.startswith(b"HTTP/1.1 302 "))
+        self.assertIn(b"Location: https://fixture.cloudflareaccess.com/", refusal)
+        self.assertIsNone(fixture.access_refusal(dict(fixture.ACCESS_TOKEN), required=True))
+
     def test_question_mode_holds_one_pending_question_in_the_main_thread(self):
         client = self.client()
         client.server.question = True
