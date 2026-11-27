@@ -173,6 +173,9 @@ final class DemoSmokeTests: XCTestCase {
         let clientID = app.textFields["accessClientID"]
         clientID.click()
         clientID.typeText("fixture-access.access")
+        // One field alone is not a token: the form says so instead of connecting without it.
+        XCTAssertTrue(app.staticTexts["accessIncomplete"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["connectButton"].isEnabled)
         let clientSecret = app.secureTextFields["accessClientSecret"]
         clientSecret.click()
         clientSecret.typeText("fixture-access-secret")

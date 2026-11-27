@@ -41,6 +41,15 @@ struct CloudflareAccessTests {
         #expect(headers(GatewayArtifactLoader.downloadRequest(URL(string: "https://gateway.example.com/download/1")!, access: nil)).id == nil)
     }
 
+    /// The service token rides on downloads, so an uppercase scheme cannot reach another port's origin.
+    @Test func uppercaseSchemeDownloadOnAnotherPortIsRefused() throws {
+        let gatewayOnPort80 = URL(string: "wss://gateway.example.com:80/")!
+        #expect(throws: GatewayFailure.self) {
+            try GatewayArtifactLoader.trustedDownloadURL("HTTPS://gateway.example.com/api/artifacts/download/1", endpoint: gatewayOnPort80)
+        }
+        #expect(try GatewayArtifactLoader.trustedDownloadURL("HTTPS://gateway.example.com:80/api/artifacts/download/1", endpoint: gatewayOnPort80).port == 80)
+    }
+
     @Test func credentialsSavedBeforeAccessSupportStillLoad() throws {
         let saved = #"{"deviceToken":"device","scopes":["operator.read"]}"#
         let credentials = try JSONDecoder().decode(GatewayCredentials.self, from: Data(saved.utf8))

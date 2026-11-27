@@ -135,7 +135,7 @@ public enum GatewayArtifactLoader {
         return resolved
     }
 
-    private static func effectivePort(_ components: URLComponents) -> Int { components.port ?? (components.scheme == "https" ? 443 : 80) }
+    private static func effectivePort(_ components: URLComponents) -> Int { components.port ?? (components.scheme?.lowercased() == "https" ? 443 : 80) }
     private static func tooLarge() -> GatewayFailure { GatewayFailure(code: "ATTACHMENT_TOO_LARGE", message: "この添付ファイルは表示できるサイズを超えています。Gateway の画面で確認してください。") }
     private static func untrusted() -> GatewayFailure { GatewayFailure(code: "UNTRUSTED_ATTACHMENT_URL", message: "接続先と異なる場所の添付は、このアプリから取得しません。") }
 }
