@@ -1,82 +1,18 @@
 import AppKit
 import SwiftUI
 
-/// Routes Return through `ComposerKeyRouting` and turns pasted or dropped files and
-/// images into attachments instead of inserting their paths.
-final class ComposerNSTextView: NSTextView {
-    var onSend: (() -> Void)?
-    var onAttachFiles: (([URL]) -> Void)?
-    var onAttachImageData: ((Data, String) -> Void)?
-    var onCompositionChange: ((Bool) -> Void)?
-
-    override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
-        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
-        onCompositionChange?(hasMarkedText())
-    }
-
-    override func unmarkText() {
-        super.unmarkText()
-        onCompositionChange?(hasMarkedText())
-    }
-
-    override func insertText(_ string: Any, replacementRange: NSRange) {
-        super.insertText(string, replacementRange: replacementRange)
-        onCompositionChange?(hasMarkedText())
-    }
-
-    override func keyDown(with event: NSEvent) {
-        let action = ComposerKeyRouting.action(keyCode: event.keyCode, modifiers: Self.modifiers(event.modifierFlags), hasMarkedText: hasMarkedText())
-        switch action {
-        case .send: onSend?()
-        case .insertNewline: insertNewlineIgnoringFieldEditor(nil)
-        case .passThrough: super.keyDown(with: event)
-        }
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        window?.makeFirstResponder(self)
-    }
-
-    override func paste(_ sender: Any?) {
-        if attach(from: NSPasteboard.general) { return }
-        super.paste(sender)
-    }
-
-    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        if attach(from: sender.draggingPasteboard) { return true }
-        return super.performDragOperation(sender)
-    }
-
-    private func attach(from pasteboard: NSPasteboard) -> Bool {
-        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
-            onAttachFiles?(urls)
-            return true
-        }
-        if let png = pasteboard.data(forType: .png) { onAttachImageData?(png, "Pasted.png"); return true }
-        if let tiff = pasteboard.data(forType: .tiff) { onAttachImageData?(tiff, "Pasted.tiff"); return true }
-        return false
-    }
-
-    static func modifiers(_ flags: NSEvent.ModifierFlags) -> ComposerModifiers {
-        var result: ComposerModifiers = []
-        if flags.contains(.shift) { result.insert(.shift) }
-        if flags.contains(.option) { result.insert(.option) }
-        if flags.contains(.command) { result.insert(.command) }
-        if flags.contains(.control) { result.insert(.control) }
-        return result
-    }
-}
-
-/// A plain-text editor that grows from one to eight lines.
+/// Hosts `ComposerTextEditor`, growing from one to eight lines. Edits are reported with
+/// the draft owner they were made for, so a write can never land in another thread.
 struct ComposerTextView: NSViewRepresentable {
-    @Binding var text: String
+    var text: String
+    var ownerID: String
     @Binding var height: CGFloat
     var isEditable: Bool
+    var onTextChange: (_ text: String, _ owner: String) -> Void
     var onSend: () -> Void
     var onAttachFiles: ([URL]) -> Void
     var onAttachImageData: (Data, String) -> Void
-    var onCompositionChange: (Bool) -> Void = { _ in }
+    var onCompositionChange: (Bool) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -86,65 +22,50 @@ struct ComposerTextView: NSViewRepresentable {
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
-        let textView = ComposerNSTextView()
-        textView.isRichText = false
-        textView.allowsUndo = true
-        textView.drawsBackground = false
-        textView.font = .systemFont(ofSize: NSFont.systemFontSize + 1)
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.isAutomaticTextReplacementEnabled = false
-        textView.textContainerInset = NSSize(width: 0, height: 3)
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
-        textView.textContainer?.widthTracksTextView = true
-        textView.delegate = context.coordinator
-        textView.setAccessibilityIdentifier("composerText")
-        textView.string = text
-        scrollView.documentView = textView
-        context.coordinator.textView = textView
-        wire(textView)
+        let editor = ComposerTextEditor(frame: .zero)
+        editor.delegate = context.coordinator
+        scrollView.documentView = editor
+        context.coordinator.editor = editor
+        wire(editor, context.coordinator)
+        editor.load(text, owner: ownerID)
         return scrollView
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.parent = self
-        guard let textView = scrollView.documentView as? ComposerNSTextView else { return }
-        wire(textView)
-        textView.isEditable = isEditable
-        // Never replace the text while the input method is composing.
-        if textView.string != text, !textView.hasMarkedText() {
-            textView.string = text
-        }
+        guard let editor = scrollView.documentView as? ComposerTextEditor else { return }
+        wire(editor, context.coordinator)
+        editor.isEditable = isEditable
+        editor.load(text, owner: ownerID)
         context.coordinator.updateHeight()
     }
 
-    private func wire(_ textView: ComposerNSTextView) {
-        textView.onSend = onSend
-        textView.onAttachFiles = onAttachFiles
-        textView.onAttachImageData = onAttachImageData
-        textView.onCompositionChange = onCompositionChange
+    private func wire(_ editor: ComposerTextEditor, _ coordinator: Coordinator) {
+        editor.onSend = onSend
+        editor.onAttachFiles = onAttachFiles
+        editor.onAttachImageData = onAttachImageData
+        editor.onCompositionChange = onCompositionChange
+        editor.onTextChange = { [weak editor, weak coordinator] value in
+            guard let owner = editor?.ownerID else { return }
+            coordinator?.parent.onTextChange(value, owner)
+            coordinator?.updateHeight()
+        }
     }
 
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ComposerTextView
-        weak var textView: ComposerNSTextView?
+        weak var editor: ComposerTextEditor?
 
         init(_ parent: ComposerTextView) { self.parent = parent }
 
-        func textDidChange(_ notification: Notification) {
-            guard let textView else { return }
-            parent.text = textView.string
-            updateHeight()
-        }
+        func textDidChange(_ notification: Notification) { editor?.publishTextChange() }
 
         func updateHeight() {
-            guard let textView, let layout = textView.layoutManager, let container = textView.textContainer else { return }
+            guard let editor, let layout = editor.layoutManager, let container = editor.textContainer else { return }
             layout.ensureLayout(for: container)
-            let inset = textView.textContainerInset.height * 2
-            let line = layout.defaultLineHeight(for: textView.font ?? .systemFont(ofSize: NSFont.systemFontSize))
+            let inset = editor.textContainerInset.height * 2
+            let line = layout.defaultLineHeight(for: editor.font ?? .systemFont(ofSize: NSFont.systemFontSize))
             let target = min(max(layout.usedRect(for: container).height, line), line * 8) + inset
             guard abs(parent.height - target) > 0.5 else { return }
             let binding = parent.$height
