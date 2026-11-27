@@ -91,7 +91,8 @@ struct ComposerView: View {
 
     private func send() {
         guard canSubmit else { return }
-        Task { await model.send() }
+        let context = model.composerContextID
+        Task { await model.send(expecting: context) }
     }
 
     private var imageLimit: Int { model.imageAttachmentLimit ?? AttachmentImport.imageLimit }

@@ -437,6 +437,13 @@ final class AppModel {
         agentNames[target.agentID] = name
     }
 
+    /// Sends only while the composer still shows `context`, so a send queued in one
+    /// thread never takes the draft of a thread chosen after it.
+    func send(expecting context: String) async {
+        guard composerContextID == context else { return }
+        await send()
+    }
+
     func send() async {
         guard canSend, let target = selectedSession else { return }
         if let existing = store.unresolvedSubmission(matching: store.selectedDraft, for: target) {
