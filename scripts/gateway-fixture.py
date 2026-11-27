@@ -39,6 +39,17 @@ def initial_messages(shared):
     return {"agent:fixture:main": [PEER_MESSAGE]} if shared else {}
 
 
+# Access mode: like a Gateway behind Cloudflare Access, an upgrade without the service token goes to a login page.
+ACCESS_TOKEN = {"cf-access-client-id": "fixture-access.access", "cf-access-client-secret": "fixture-access-secret"}
+ACCESS_LOGIN = "https://fixture.cloudflareaccess.com/cdn-cgi/access/login/fixture"
+
+
+def access_refusal(headers, required):
+    if not required or all(headers.get(name) == value for name, value in ACCESS_TOKEN.items()):
+        return None
+    return ("HTTP/1.1 302 Found\r\nLocation: " + ACCESS_LOGIN + "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").encode()
+
+
 class Client(socketserver.StreamRequestHandler):
     def handle(self):
         headers = {}
@@ -49,6 +60,11 @@ class Client(socketserver.StreamRequestHandler):
                 break
             key, value = line.decode().split(":", 1)
             headers[key.lower()] = value.strip()
+        refusal = access_refusal(headers, getattr(self.server, "access", False))
+        if refusal:
+            self.wfile.write(refusal)
+            self.wfile.flush()
+            return
         digest = hashlib.sha1((headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()
         accept = base64.b64encode(digest).decode()
         self.wfile.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n").encode())
@@ -228,11 +244,13 @@ if __name__ == "__main__":
     parser.add_argument("--pairing", action="store_true", help="reject every connect with a pairing request")
     parser.add_argument("--question", action="store_true", help="hold one pending question in the main thread")
     parser.add_argument("--shared", action="store_true", help="seed a teammate's message in the main thread")
+    parser.add_argument("--access", action="store_true", help="require a Cloudflare Access service token on the upgrade")
     options = parser.parse_args()
     with Server(("127.0.0.1", options.port), Client) as server:
         server.pairing = options.pairing
         server.question = options.question
         server.shared = options.shared
+        server.access = options.access
         server.sessions = {"agent:fixture:main": {"key": "agent:fixture:main", "agentId": "fixture", "sessionId": "fixture-main", "displayName": "Main"}}
         server.messages = initial_messages(options.shared)
         print(server.server_address[1], flush=True)

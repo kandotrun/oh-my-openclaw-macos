@@ -33,7 +33,7 @@ public enum GatewayArtifactLoader {
     public static let maxImageBytes = 12 * 1024 * 1024
     public static let maxFileBytes = 20 * 1024 * 1024
 
-    public static func load(_ attachment: ChatAttachment, session: ChatSession, service: any GatewayServing, endpoint: URL) async throws -> Data {
+    public static func load(_ attachment: ChatAttachment, session: ChatSession, service: any GatewayServing, endpoint: URL, access: CloudflareAccessToken? = nil) async throws -> Data {
         let limit = attachment.mimeType.hasPrefix("image/") ? maxImageBytes : maxFileBytes
         if !attachment.data.isEmpty {
             guard attachment.data.count <= limit else { throw tooLarge() }
@@ -68,9 +68,7 @@ public enum GatewayArtifactLoader {
         configuration.timeoutIntervalForRequest = 30; configuration.timeoutIntervalForResource = 60
         let http = URLSession(configuration: configuration, delegate: ArtifactRedirectRefusal(), delegateQueue: nil)
         defer { http.invalidateAndCancel() }
-        var request = URLRequest(url: url)
-        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
-        let (bytes, urlResponse) = try await http.bytes(for: request)
+        let (bytes, urlResponse) = try await http.bytes(for: downloadRequest(url, access: access))
         guard let response = urlResponse as? HTTPURLResponse, response.statusCode == 200 else {
             throw GatewayFailure(code: "ATTACHMENT_DOWNLOAD_FAILED", message: "添付ファイルを取得できません。接続を確認してもう一度開いてください。")
         }
@@ -83,6 +81,14 @@ public enum GatewayArtifactLoader {
         }
         try Task.checkCancellation()
         return data
+    }
+
+    /// A download from a URL that `trustedDownloadURL` placed on the Gateway origin.
+    static func downloadRequest(_ url: URL, access: CloudflareAccessToken?) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        access?.apply(to: &request)
+        return request
     }
 
     /// Only Gateway artifact routes on the configured origin/base path may be read.
@@ -129,7 +135,7 @@ public enum GatewayArtifactLoader {
         return resolved
     }
 
-    private static func effectivePort(_ components: URLComponents) -> Int { components.port ?? (components.scheme == "https" ? 443 : 80) }
+    private static func effectivePort(_ components: URLComponents) -> Int { components.port ?? (components.scheme?.lowercased() == "https" ? 443 : 80) }
     private static func tooLarge() -> GatewayFailure { GatewayFailure(code: "ATTACHMENT_TOO_LARGE", message: "この添付ファイルは表示できるサイズを超えています。Gateway の画面で確認してください。") }
     private static func untrusted() -> GatewayFailure { GatewayFailure(code: "UNTRUSTED_ATTACHMENT_URL", message: "接続先と異なる場所の添付は、このアプリから取得しません。") }
 }

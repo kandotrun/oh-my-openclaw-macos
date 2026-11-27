@@ -224,11 +224,12 @@ final class AppModel {
         try? profileRepository.save(profiles)
     }
 
-    func connect(urlText: String, secret: String, password: Bool, setupCode: String, alias: String? = nil) async {
-        await connect(urlText: urlText, secret: secret, password: password, setupCode: setupCode, alias: alias, savedEndpoint: nil)
+    /// `access` is the Cloudflare Access service token for a Gateway published behind Access.
+    func connect(urlText: String, secret: String, password: Bool, setupCode: String, alias: String? = nil, access: CloudflareAccessToken? = nil) async {
+        await connect(urlText: urlText, secret: secret, password: password, setupCode: setupCode, alias: alias, access: access, savedEndpoint: nil)
     }
 
-    private func connect(urlText: String, secret: String, password: Bool, setupCode: String, alias: String? = nil, savedEndpoint: String?) async {
+    private func connect(urlText: String, secret: String, password: Bool, setupCode: String, alias: String? = nil, access: CloudflareAccessToken? = nil, savedEndpoint: String?) async {
         guard !changingConnection, !inBackground, !Task.isCancelled else { return }
         var transactionStarted = false
         defer { if transactionStarted { finishConnectionSwitch() } }
@@ -239,13 +240,19 @@ final class AppModel {
             let credentials: GatewayCredentials
             if !setupCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 let setup = try GatewayEndpoint.decodeSetupCode(setupCode)
-                url = setup.url; credentials = GatewayCredentials(bootstrapToken: setup.bootstrapToken)
+                url = setup.url
+                // A setup code pairs again; the Access service token in front of the Gateway stays.
+                let stored = try connectionAccess.read(credentialKey(url))
+                credentials = GatewayCredentials(bootstrapToken: setup.bootstrapToken, access: access ?? stored?.access)
             } else {
                 let exactEndpoint = savedEndpoint ?? savedGateways.first(where: { $0.endpoint == urlText })?.endpoint
                 url = try exactEndpoint.map { try SavedGateway.exactURL($0) } ?? GatewayEndpoint.parse(urlText)
                 let value = secret.isEmpty ? nil : secret
-                if value == nil { credentials = try connectionAccess.read(credentialKey(url)) ?? GatewayCredentials() }
-                else { credentials = password ? GatewayCredentials(password: value) : GatewayCredentials(token: value) }
+                let stored = try connectionAccess.read(credentialKey(url))
+                var entered = value.map { password ? GatewayCredentials(password: $0) : GatewayCredentials(token: $0) } ?? stored ?? GatewayCredentials()
+                // A new token or password keeps the saved Access service token unless another one is entered.
+                entered.access = access ?? stored?.access
+                credentials = entered
             }
             guard let transaction = beginConnectionSwitch() else { return }
             transactionStarted = true
@@ -360,7 +367,7 @@ final class AppModel {
                 let old = try connectionAccess.read(credentialKey(endpoint))
                 let scopes = received.payload["auth"]["scopes"].arrayValue?.compactMap(\.stringValue)
                 let storedScopes = old?.deviceToken == token ? (old?.scopes ?? scopes) : scopes
-                try connectionAccess.write(GatewayCredentials(deviceToken: token, scopes: storedScopes), credentialKey(endpoint))
+                try connectionAccess.write(GatewayCredentials(deviceToken: token, scopes: storedScopes, access: old?.access), credentialKey(endpoint))
             }
             let defaults = received.snapshot["sessionDefaults"]
             guard let agentID = defaults["defaultAgentId"].stringValue, let mainKey = defaults["mainSessionKey"].stringValue else {
@@ -642,7 +649,8 @@ final class AppModel {
         guard connectionState == .connected, let service, let endpoint else {
             throw GatewayFailure(code: "NOT_CONNECTED", message: "Gateway に接続してから添付ファイルを読み込んでください。")
         }
-        let data = try await GatewayArtifactLoader.load(attachment, session: session, service: service, endpoint: endpoint)
+        let access = (try? connectionAccess.read(credentialKey(endpoint)))?.access
+        let data = try await GatewayArtifactLoader.load(attachment, session: session, service: service, endpoint: endpoint, access: access)
         guard composerContextID == context, selectedSession?.sessionID == session.sessionID else {
             throw GatewayFailure(code: "SESSION_CHANGED", message: "接続または会話が変わったため読み込みを中断しました。")
         }

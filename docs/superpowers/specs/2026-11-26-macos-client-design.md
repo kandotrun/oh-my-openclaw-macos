@@ -147,6 +147,14 @@ Choose a project. Choose "New worktree" or "Current checkout", as offered by `pr
 ### Connection and settings
 
 - **Disconnected.** The timeline area shows the connection form: URL with token or password, or a pasted setup code. It also offers the local demo.
+- **Cloudflare Access.** A Gateway published behind Cloudflare Access sends native clients to a login page. The form therefore takes an optional Access service token (Client ID and Client Secret), with either connection method.
+  - The token is saved with the Gateway's credentials.
+  - It is kept when pairing swaps in a device token, when only the Gateway token is entered again, and when a setup code pairs the same Gateway again.
+  - It is sent as `CF-Access-Client-Id` and `CF-Access-Client-Secret`, and only to the Gateway origin.
+  - The socket upgrade carries it today. The image-preview and attachment-download loaders also accept it, for when the transcript starts loading media.
+  - Redirects are never followed.
+  - The form asks for both fields together. Leaving both blank keeps the saved token.
+  - An Access login redirect is reported as such.
 - **Settings scene (Cmd-,).** Saved Gateways (add, rename, delete, switch, reconnect, disconnect), the notification switch, and the app version.
 
 ### Commands

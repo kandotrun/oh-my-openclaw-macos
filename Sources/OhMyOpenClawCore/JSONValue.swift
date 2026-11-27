@@ -45,9 +45,11 @@ public struct GatewayCredentials: Codable, Sendable, Equatable {
     public var bootstrapToken: String?
     public var deviceToken: String?
     public var scopes: [String]?
-    public init(token: String? = nil, password: String? = nil, bootstrapToken: String? = nil, deviceToken: String? = nil, scopes: [String]? = nil) {
+    /// Sent with every request to a Gateway published behind Cloudflare Access.
+    public var access: CloudflareAccessToken?
+    public init(token: String? = nil, password: String? = nil, bootstrapToken: String? = nil, deviceToken: String? = nil, scopes: [String]? = nil, access: CloudflareAccessToken? = nil) {
         self.token = token; self.password = password; self.bootstrapToken = bootstrapToken
-        self.deviceToken = deviceToken; self.scopes = scopes
+        self.deviceToken = deviceToken; self.scopes = scopes; self.access = access
     }
 }
 

@@ -7,7 +7,7 @@ enum GatewayInboundMediaLoader {
     static let imageLimit = 12 * 1024 * 1024
     typealias Fetch = @Sendable (URLRequest, Int) async throws -> (Data, HTTPURLResponse)
 
-    static func load(_ reference: InboundMediaReference, session: ChatSession, endpoint: URL, deviceToken: String) async throws -> Data {
+    static func load(_ reference: InboundMediaReference, session: ChatSession, endpoint: URL, deviceToken: String, access: CloudflareAccessToken? = nil) async throws -> Data {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
@@ -19,7 +19,7 @@ enum GatewayInboundMediaLoader {
         let http = URLSession(configuration: configuration, delegate: InboundMediaRedirectRefusal(), delegateQueue: nil)
         defer { http.invalidateAndCancel() }
         do {
-            return try await load(reference, session: session, endpoint: endpoint, deviceToken: deviceToken) { request, limit in
+            return try await load(reference, session: session, endpoint: endpoint, deviceToken: deviceToken, access: access) { request, limit in
                 let (bytes, response) = try await http.bytes(for: request)
                 guard let response = response as? HTTPURLResponse, response.statusCode == 200 else { throw unavailable() }
                 guard response.expectedContentLength <= Int64(limit) else { throw tooLarge() }
@@ -38,8 +38,8 @@ enum GatewayInboundMediaLoader {
     }
 
     /// Injectable bounded transport keeps the credential and route contract testable.
-    static func load(_ reference: InboundMediaReference, session: ChatSession, endpoint: URL, deviceToken: String, fetch: Fetch) async throws -> Data {
-        let metadataRequest = try metadataRequest(reference, session: session, endpoint: endpoint, deviceToken: deviceToken)
+    static func load(_ reference: InboundMediaReference, session: ChatSession, endpoint: URL, deviceToken: String, access: CloudflareAccessToken? = nil, fetch: Fetch) async throws -> Data {
+        let metadataRequest = try metadataRequest(reference, session: session, endpoint: endpoint, deviceToken: deviceToken, access: access)
         let (metadataData, metadataResponse) = try await fetch(metadataRequest, metadataLimit)
         try Task.checkCancellation()
         guard metadataResponse.statusCode == 200, metadataResponse.mimeType?.lowercased() == "application/json" else { throw unavailable() }
@@ -51,7 +51,7 @@ enum GatewayInboundMediaLoader {
               let expiry = metadata["mediaTicketExpiresAt"].stringValue,
               let date = ticketExpiry(expiry), date > Date() else { throw unavailable() }
         if let size = metadata["sizeBytes"].intValue, size < 0 || size > imageLimit { throw tooLarge() }
-        let request = try bytesRequest(reference, session: session, endpoint: endpoint, mediaTicket: ticket)
+        let request = try bytesRequest(reference, session: session, endpoint: endpoint, mediaTicket: ticket, access: access)
         let (data, response) = try await fetch(request, imageLimit)
         try Task.checkCancellation()
         guard response.statusCode == 200, response.mimeType?.lowercased().hasPrefix("image/") == true, !data.isEmpty else { throw unavailable() }
@@ -59,17 +59,17 @@ enum GatewayInboundMediaLoader {
         return data
     }
 
-    static func metadataRequest(_ reference: InboundMediaReference, session: ChatSession, endpoint: URL, deviceToken: String) throws -> URLRequest {
+    static func metadataRequest(_ reference: InboundMediaReference, session: ChatSession, endpoint: URL, deviceToken: String, access: CloudflareAccessToken? = nil) throws -> URLRequest {
         guard validHeaderValue(deviceToken) else { throw unavailable() }
-        var request = try request(reference, session: session, endpoint: endpoint, extra: [URLQueryItem(name: "meta", value: "1")])
+        var request = try request(reference, session: session, endpoint: endpoint, access: access, extra: [URLQueryItem(name: "meta", value: "1")])
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("Bearer " + deviceToken, forHTTPHeaderField: "Authorization")
         return request
     }
 
-    static func bytesRequest(_ reference: InboundMediaReference, session: ChatSession, endpoint: URL, mediaTicket: String) throws -> URLRequest {
+    static func bytesRequest(_ reference: InboundMediaReference, session: ChatSession, endpoint: URL, mediaTicket: String, access: CloudflareAccessToken? = nil) throws -> URLRequest {
         guard validHeaderValue(mediaTicket) else { throw unavailable() }
-        var request = try request(reference, session: session, endpoint: endpoint, extra: [
+        var request = try request(reference, session: session, endpoint: endpoint, access: access, extra: [
             URLQueryItem(name: "mediaTicket", value: mediaTicket),
             URLQueryItem(name: "variant", value: "thumbnail"),
             URLQueryItem(name: "width", value: "960"),
@@ -78,7 +78,7 @@ enum GatewayInboundMediaLoader {
         return request
     }
 
-    private static func request(_ reference: InboundMediaReference, session: ChatSession, endpoint: URL, extra: [URLQueryItem]) throws -> URLRequest {
+    private static func request(_ reference: InboundMediaReference, session: ChatSession, endpoint: URL, access: CloudflareAccessToken?, extra: [URLQueryItem]) throws -> URLRequest {
         guard InboundMediaReference(source: reference.source, messageID: reference.messageID) != nil,
               !session.key.isEmpty, !session.agentID.isEmpty,
               let physicalID = session.sessionID, !physicalID.isEmpty else { throw unavailable() }
@@ -101,6 +101,7 @@ enum GatewayInboundMediaLoader {
         var request = URLRequest(url: url)
         request.timeoutInterval = 30
         request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        access?.apply(to: &request)
         return request
     }
 

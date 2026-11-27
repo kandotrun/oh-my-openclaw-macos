@@ -10,10 +10,15 @@ struct ConnectionView: View {
     @State private var usePassword = false
     @State private var setupCode = ""
     @State private var useSetupCode = false
+    @State private var accessClientID = ""
+    @State private var accessClientSecret = ""
 
     private var isConnecting: Bool { model.changingConnection || model.connectionState == .connecting }
+    /// Both connection methods can reach a Gateway behind Cloudflare Access.
+    private var accessEntry: AccessTokenEntry { AccessTokenEntry.parse(clientID: accessClientID, clientSecret: accessClientSecret) }
     private var canSubmit: Bool {
-        !isConnecting && !(useSetupCode ? setupCode : urlText).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !isConnecting && accessEntry != .incomplete &&
+            !(useSetupCode ? setupCode : urlText).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
@@ -47,10 +52,28 @@ struct ConnectionView: View {
                         SecureField(usePassword ? "パスワード" : "トークン", text: $secret)
                             .accessibilityIdentifier("connectionSecret")
                     }
+                    Section {
+                        TextField("Client ID", text: $accessClientID, prompt: Text("任意"))
+                            .autocorrectionDisabled()
+                            .accessibilityIdentifier("accessClientID")
+                        SecureField("Client Secret", text: $accessClientSecret, prompt: Text("任意"))
+                            .accessibilityIdentifier("accessClientSecret")
+                    } header: {
+                        Text("Cloudflare Access")
+                    } footer: {
+                        if accessEntry == .incomplete {
+                            Text("Client ID と Client Secret は両方入力してください。")
+                                .font(.footnote).foregroundStyle(.red)
+                                .accessibilityIdentifier("accessIncomplete")
+                        } else {
+                            Text("Gateway を Cloudflare Access で保護している場合は、サービストークンを入力します。保存済みのトークンは空欄のまま引き継ぎます。")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
                 }
                 .formStyle(.grouped)
                 .scrollDisabled(true)
-                .frame(minHeight: useSetupCode ? 170 : 230)
+                .frame(minHeight: useSetupCode ? 340 : 400)
 
                 HStack(spacing: 12) {
                     Button(isConnecting ? "接続中…" : "Gateway に接続", action: submit)
@@ -80,10 +103,19 @@ struct ConnectionView: View {
     private func submit() {
         let submittedURL = urlText, submittedSecret = secret, submittedAlias = alias
         let submittedCode = useSetupCode ? setupCode : "", submittedPassword = usePassword
+        let entry = accessEntry
+        guard entry != .incomplete else { return }
+        let submittedAccess: CloudflareAccessToken? = if case .token(let token) = entry { token } else { nil }
+        let submittedAccessID = accessClientID, submittedAccessSecret = accessClientSecret
         Task {
-            await model.connect(urlText: submittedURL, secret: submittedSecret, password: submittedPassword, setupCode: submittedCode, alias: submittedAlias)
+            await model.connect(urlText: submittedURL, secret: submittedSecret, password: submittedPassword, setupCode: submittedCode,
+                                alias: submittedAlias, access: submittedAccess)
             if secret == submittedSecret { secret = "" }
             if setupCode == submittedCode { setupCode = "" }
+            // The pair was sent together, so it leaves the form together.
+            if submittedAccess != nil, accessClientID == submittedAccessID, accessClientSecret == submittedAccessSecret {
+                accessClientID = ""; accessClientSecret = ""
+            }
         }
     }
 

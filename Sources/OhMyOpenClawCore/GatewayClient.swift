@@ -90,7 +90,7 @@ public actor GatewayClient: GatewayServing {
             throw GatewayFailure(code: "MEDIA_PAIRING_REQUIRED", message: "画像を読み込むには、この端末を承認した Gateway に再接続してください。")
         }
         let currentEpoch = epoch
-        let data = try await GatewayInboundMediaLoader.load(reference, session: target, endpoint: endpoint, deviceToken: token)
+        let data = try await GatewayInboundMediaLoader.load(reference, session: target, endpoint: endpoint, deviceToken: token, access: credentials.access)
         try Task.checkCancellation()
         try requireCurrent(currentEpoch)
         guard admitted, self.hello != nil else { throw disconnectedError() }
@@ -107,7 +107,7 @@ public actor GatewayClient: GatewayServing {
         maxPayloadBytes = 25 * 1024 * 1024
         lastOuterSequence = nil
         lastReceivedAt = .now
-        let task = session.webSocketTask(with: validatedEndpoint)
+        let task = session.webSocketTask(with: Self.upgradeRequest(validatedEndpoint, credentials: credentials))
         task.maximumMessageSize = maxPayloadBytes
         socket = task
         handshakeDeadline = Task { [weak self] in
@@ -208,7 +208,7 @@ public actor GatewayClient: GatewayServing {
             }
         } catch {
             guard connectionEpoch == epoch else { return }
-            let failure = (error as? GatewayFailure) ?? GatewayFailure(code: "CONNECTION_LOST", message: "Gateway との接続が切れました。接続先とネットワークを確認してください。", details: .object(["networkCode": .number(Double((error as NSError).code))]))
+            let failure = (error as? GatewayFailure) ?? Self.upgradeRefusal(task.response) ?? GatewayFailure(code: "CONNECTION_LOST", message: "Gateway との接続が切れました。接続先とネットワークを確認してください。", details: .object(["networkCode": .number(Double((error as NSError).code))]))
             close(epoch: connectionEpoch, error: failure, notify: hello != nil)
         }
     }
@@ -312,6 +312,24 @@ public actor GatewayClient: GatewayServing {
         for observer in observers.values { if case .dropped = observer.yield(event) { retained = false } }
         return retained
     }
+    /// The socket upgrade, with the Cloudflare Access service token when one is saved.
+    static func upgradeRequest(_ endpoint: URL, credentials: GatewayCredentials) -> URLRequest {
+        var request = URLRequest(url: endpoint)
+        credentials.access?.apply(to: &request)
+        return request
+    }
+
+    /// An HTTP answer in place of the WebSocket upgrade, such as a Cloudflare Access login redirect.
+    static func upgradeRefusal(_ response: URLResponse?) -> GatewayFailure? {
+        guard let response = response as? HTTPURLResponse, response.statusCode != 101 else { return nil }
+        if (300..<400).contains(response.statusCode),
+           let location = response.value(forHTTPHeaderField: "Location").flatMap(URL.init(string:)),
+           location.host?.lowercased().hasSuffix(".cloudflareaccess.com") == true {
+            return GatewayFailure(code: "ACCESS_REQUIRED", message: "Cloudflare Access のログインを求められました。接続設定に Access のサービストークン（Client ID と Client Secret）を入力してください。")
+        }
+        return GatewayFailure(code: "UPGRADE_REFUSED", message: "接続先が WebSocket の接続を受け付けませんでした（HTTP \(response.statusCode)）。URL と、Cloudflare Access などの設定を確認してください。")
+    }
+
     private func removeObserver(_ id: UUID) { observers.removeValue(forKey: id) }
     private func canSend(id: String, epoch expected: UUID) -> Bool { expected == epoch && pending[id] != nil }
     private func requireCurrent(_ expected: UUID) throws { if expected != epoch || socket == nil { throw disconnectedError() } }
