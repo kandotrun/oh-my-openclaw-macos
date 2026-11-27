@@ -10,6 +10,12 @@ private func launchIsolatedApp() -> XCUIApplication {
     return app
 }
 
+/// Selectable text exposes its content as the element's value, plain text as its label.
+@MainActor
+private func text(containing fragment: String, in element: XCUIElement) -> XCUIElement {
+    element.staticTexts.matching(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", fragment, fragment)).firstMatch
+}
+
 /// Connects through the first-run form with a synthetic token.
 @MainActor
 private func connect(_ app: XCUIApplication, to gateway: String) {
@@ -77,6 +83,31 @@ final class DemoSmokeTests: XCTestCase {
         XCTAssertTrue(reply.waitForExistence(timeout: 20))
     }
 
+    /// In a shared thread, teammates sit on the left with their name, and my messages stay on the right.
+    @MainActor
+    func testTeamThreadShowsTeammatesOnTheLeft() throws {
+        let app = launchIsolatedApp()
+        let demo = app.buttons["tryDemo"]
+        XCTAssertTrue(demo.waitForExistence(timeout: 10))
+        demo.click()
+        let team = app.staticTexts["チームの作業"].firstMatch
+        XCTAssertTrue(team.waitForExistence(timeout: 10))
+        team.click()
+        let peer = app.descendants(matching: .any).matching(identifier: "peerMessage").firstMatch
+        XCTAssertTrue(peer.waitForExistence(timeout: 10))
+        XCTAssertTrue(peer.staticTexts["佐藤 花子"].exists)
+        let own = app.descendants(matching: .any).matching(identifier: "ownMessage").firstMatch
+        XCTAssertTrue(own.waitForExistence(timeout: 5))
+        let peerText = text(containing: "UI テストが時々落ちます", in: peer)
+        let ownText = text(containing: "PR を作っておいて", in: own)
+        XCTAssertTrue(peerText.exists && ownText.exists)
+        XCTAssertLessThan(peerText.frame.midX, ownText.frame.midX)
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "team-thread"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     /// Errors from Gateway actions stay visible when only the Settings window is open.
     @MainActor
     func testConnectionFailureIsShownInSettings() throws {
@@ -127,5 +158,32 @@ final class DemoSmokeTests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: "mainThreadRow").firstMatch.click()
         XCTAssertTrue(answer.waitForExistence(timeout: 10))
         XCTAssertEqual(answer.value as? String, "Start from main")
+    }
+
+    /// `just uitest` starts scripts/gateway-fixture.py --shared, whose main thread holds a teammate's message.
+    /// The fixture names this connection's profile in `hello-ok` and stamps it on every send.
+    @MainActor
+    func testSharedGatewayKeepsTheTeammateLeftAndMyMessageRight() throws {
+        guard let fixture = ProcessInfo.processInfo.environment["OHMYOPENCLAW_SHARED_FIXTURE"] else {
+            throw XCTSkip("Run through `just uitest`, which starts the shared fixture.")
+        }
+        let app = launchIsolatedApp()
+        connect(app, to: fixture)
+        let peers = app.descendants(matching: .any).matching(identifier: "peerMessage")
+        XCTAssertTrue(peers.firstMatch.waitForExistence(timeout: 15))
+        XCTAssertTrue(peers.firstMatch.staticTexts["Peer Person"].exists)
+        let composer = app.textViews["composerText"]
+        composer.click()
+        composer.typeText("On it")
+        composer.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(text(containing: "synthetic WebSocket response", in: app).waitForExistence(timeout: 20))
+        // The teammate answers while my run settles. Only the history reload shows that answer, and the
+        // same reload replaces my local copy with the stored row and its profile.
+        XCTAssertTrue(text(containing: "Thanks, I'll review it.", in: app).waitForExistence(timeout: 10))
+        XCTAssertEqual(peers.count, 2)
+        // My message is the thread's only own row: one copy, not the local copy beside the stored one.
+        let own = app.descendants(matching: .any).matching(identifier: "ownMessage")
+        XCTAssertEqual(own.count, 1)
+        XCTAssertTrue(text(containing: "On it", in: own.firstMatch).exists)
     }
 }

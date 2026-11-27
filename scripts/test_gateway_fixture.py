@@ -82,6 +82,55 @@ class FixtureConcurrencyTests(unittest.TestCase):
         self.assertEqual(frames[0]["error"]["details"], {"code": "PAIRING_REQUIRED", "requestId": "req-fixture-1"})
         self.assertFalse(client.admitted)
 
+    def connect(self, client, frames):
+        client.admitted = False
+        client.timestamp = 1
+        client.server.pairing = False
+        client.send = frames.append
+        client.dispatch({"type": "req", "id": "connect", "method": "connect", "params": {
+            "minProtocol": 4, "maxProtocol": 4, "role": "operator", "scopes": ["operator.read"],
+            "client": {"id": "gateway-client", "mode": "ui", "platform": "macos", "deviceFamily": "Mac", "instanceId": "device-1"},
+            "device": {"nonce": "fixture-challenge", "signedAt": 1, "id": "a" * 64}}})
+
+    def test_hello_presence_names_this_connection_as_the_fixture_owner(self):
+        client = self.client()
+        frames = []
+        self.connect(client, frames)
+        hello = frames[0]["payload"]
+        [row] = [row for row in hello["snapshot"]["presence"] if row["connectionId"] == hello["server"]["connId"]]
+        self.assertEqual(row["instanceId"], "device-1")
+        self.assertEqual(row["user"]["identity"], {"type": "profile", "id": "fixture-owner"})
+
+    def test_chat_send_stamps_the_owner_on_the_user_record(self):
+        client = self.client()
+        client.send = [].append
+        with patch.object(fixture.Client, "respond"):
+            client.dispatch({"type": "req", "id": "send", "method": "chat.send", "params": {
+                "sessionKey": "session", "message": "hi", "idempotencyKey": "run-1"}})
+        [record] = client.server.messages["session"]
+        self.assertEqual(record["__openclaw"]["id"], "run-1")
+        # The client reconciles its local copy with the stored row through this key.
+        self.assertEqual(record["__openclaw"]["idempotencyKey"], "run-1:user")
+        self.assertEqual(record["__openclaw"]["senderIdentity"], {"type": "profile", "id": "fixture-owner"})
+
+    def test_shared_mode_seeds_a_peer_message_in_the_main_thread(self):
+        self.assertEqual(fixture.initial_messages(shared=False), {})
+        [peer] = fixture.initial_messages(shared=True)["agent:fixture:main"]
+        self.assertEqual(peer["role"], "user")
+        self.assertEqual(peer["__openclaw"]["senderName"], "Peer Person")
+        self.assertEqual(peer["__openclaw"]["senderIdentity"], {"type": "profile", "id": "fixture-peer"})
+
+    def test_shared_mode_has_the_teammate_answer_once_my_run_settles(self):
+        client = self.client()
+        client.server.shared = True
+        client.server.messages = {"agent:fixture:main": []}
+        client.send = [].append
+        with patch.object(fixture.time, "sleep"):
+            client.respond({"idempotencyKey": "run-1", "sessionKey": "agent:fixture:main"})
+        reply = client.server.messages["agent:fixture:main"][-1]
+        self.assertEqual(reply["content"][0]["text"], "Thanks, I'll review it.")
+        self.assertEqual(reply["__openclaw"]["senderIdentity"], {"type": "profile", "id": "fixture-peer"})
+
     def test_question_mode_holds_one_pending_question_in_the_main_thread(self):
         client = self.client()
         client.server.question = True

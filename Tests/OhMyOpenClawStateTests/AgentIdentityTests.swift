@@ -125,3 +125,15 @@ private actor IdentityGateway: GatewayServing {
     #expect(app.agentName == "エージェント")
     #expect(app.connectionState == .disconnected)
 }
+
+/// An agent can open a session that belongs to another agent; its opening row names the opener.
+@Test @MainActor func agentOpeningsUseTheOpenersKnownName() async throws {
+    let gateway = IdentityGateway()
+    let app = AppModel(service: gateway, initialStore: identityStore(selected: identityMain))
+    await app.establishConnection()
+    await app.selectSession(identitySide)
+    #expect(app.agentName == "Agent Beta")
+    #expect(app.agentName(for: "a") == "Agent Alpha")
+    #expect(app.agentName(for: "unknown") == "unknown")
+    await app.disconnect()
+}

@@ -33,6 +33,7 @@ Mac-specific changes so far:
 - The client identifies itself with platform `macos` and device family `Mac`.
 - Credentials use the data protection keychain under a Mac service name.
 - Collapsed `sessions.changed` message notifications refetch the selected conversation.
+- User rows keep the sender the Gateway recorded, and the store remembers the viewer's profile per Gateway, so shared sessions show who wrote each message.
 
 The client targets Gateway protocol v4, checked against OpenClaw `main` at [`b1d355f`](https://github.com/openclaw/openclaw/tree/b1d355fcc9fcf91a4514c2612ce7b33211c710b6) (release 2026.11.10).
 Adapted OpenClaw authentication code retains its upstream MIT notice in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

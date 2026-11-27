@@ -14,6 +14,8 @@ final class AppModel {
     var isDemo = false
     private var agentNames: [String: String] = [:]
     var agentName: String { selectedSession.flatMap { agentNames[$0.agentID] } ?? "エージェント" }
+    /// An agent's name once this connection has looked it up, else its id.
+    func agentName(for id: String) -> String { agentNames[id] ?? id }
     var models: [ModelOption] = []
     var errorMessage: String?
     var notice: String?
@@ -65,6 +67,9 @@ final class AppModel {
     @ObservationIgnored private var inBackground = false
     @ObservationIgnored private var agentIdentityRequest = UUID()
     @ObservationIgnored private var agentIdentityTask: Task<Void, Never>?
+    /// Who "me" is on this connection. Rendering uses `timelineViewer`.
+    private(set) var viewer: ViewerIdentity = .unresolved
+    @ObservationIgnored private(set) var viewerTask: Task<Void, Never>?
 
     var savedGateways: [SavedGateway] { gatewayProfiles.profiles }
     var activeGateway: SavedGateway? {
@@ -78,6 +83,11 @@ final class AppModel {
         [isDemo ? "local-demo" : endpoint?.absoluteString ?? "unconfigured", selectedSession?.agentID ?? "", selectedSession?.key ?? "", selectedSession?.sessionID ?? "", connectionGeneration.uuidString, selectionGeneration.uuidString].joined(separator: "|")
     }
     var messages: [ChatMessage] { store.selectedMessages.filter(\.isConversationMessage) }
+    /// The viewer for attribution. While unresolved, the profile this Gateway named last keeps saved rows on their side.
+    var timelineViewer: ViewerIdentity {
+        if case .unresolved = viewer, let cached = store.viewerProfileID { return .profile(cached) }
+        return viewer
+    }
     var draftText: String {
         get { store.selectedDraft.text }
         set {
@@ -341,6 +351,11 @@ final class AppModel {
             guard connectionGeneration == generation, !inBackground else { return }
             try Task.checkCancellation()
             hello = received
+            adoptViewer(.fromHello(received.payload))
+            if case .unresolved = viewer, received.payload["features"]["methods"].arrayValue?.contains(.string("users.self")) == true {
+                // The profile lookup can wait on an identity sync, so it never holds up the connection.
+                viewerTask = Task { [weak self] in await self?.resolveViewerProfile(generation: generation) }
+            }
             if let endpoint, let token = received.payload["auth"]["deviceToken"].stringValue {
                 let old = try connectionAccess.read(credentialKey(endpoint))
                 let scopes = received.payload["auth"]["scopes"].arrayValue?.compactMap(\.stringValue)
@@ -377,9 +392,34 @@ final class AppModel {
         }
     }
 
+    private func resolveViewerProfile(generation: UUID) async {
+        guard let service else { return }
+        do {
+            let result = try await service.request(method: "users.self", params: .object([:]))
+            guard connectionGeneration == generation, !Task.isCancelled else { return }
+            adoptViewer(.fromUsersSelf(result))
+        } catch let failure as GatewayFailure where failure.code == "FORBIDDEN" {
+            guard connectionGeneration == generation, !Task.isCancelled else { return }
+            adoptViewer(.profileless)
+        } catch {}
+    }
+
+    private func adoptViewer(_ identity: ViewerIdentity) {
+        viewer = identity
+        let remembered: String?
+        switch identity {
+        case .unresolved: return
+        case .profileless: remembered = nil
+        case .profile(let id): remembered = id
+        }
+        guard store.viewerProfileID != remembered else { return }
+        store.viewerProfileID = remembered; scheduleSave()
+    }
+
     private func retireConnection() async {
         connectionGeneration = UUID(); selectionGeneration = UUID()
         agentIdentityRequest = UUID(); agentIdentityTask?.cancel(); agentIdentityTask = nil
+        viewerTask?.cancel(); viewerTask = nil; viewer = .unresolved
         agentNames = [:]
         eventTask?.cancel(); eventTask = nil; refreshTask?.cancel(); refreshTask = nil
         let previous = service; service = nil; hello = nil; currentSubscription = nil

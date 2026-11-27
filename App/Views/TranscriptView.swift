@@ -40,7 +40,9 @@ struct TranscriptView: View {
                             .padding(.top, 48)
                     }
                     ForEach(model.messages) { message in
-                        MessageRow(message: message, retry: { Task { await model.retryPending(message.id) } }).id(message.id)
+                        let attribution = SenderStyle.attribution(of: message, viewer: model.timelineViewer)
+                        MessageRow(message: message, attribution: attribution, agentName: model.agentName(for:),
+                                   retry: { Task { await model.retryPending(message.id) } }).id(message.id)
                     }
                     ForEach(model.prompts) { prompt in
                         let answer = Binding { model.promptAnswers[prompt.id, default: ""] } set: { model.promptAnswers[prompt.id] = $0 }
@@ -136,34 +138,76 @@ private struct WorkingIndicator: View {
     }
 }
 
+/// My messages on the right, other people and agents on the left with a name, replies as Markdown.
 private struct MessageRow: View {
     let message: ChatMessage
+    let attribution: Attribution
+    let agentName: (String) -> String
     let retry: () -> Void
-    private var isUser: Bool { message.role == .user }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            if isUser { Spacer(minLength: 80) }
-            VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
-                if !message.text.isEmpty {
-                    if isUser {
-                        Text(message.text)
-                            .textSelection(.enabled)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 12))
-                    } else {
-                        MarkdownMessageView(text: message.text)
-                    }
+        switch attribution {
+        case .own:
+            HStack(alignment: .top, spacing: 0) {
+                Spacer(minLength: 80)
+                VStack(alignment: .trailing, spacing: 6) {
+                    bubble(tint: Color.accentColor.opacity(0.14))
+                    attachmentList
+                    delivery
                 }
-                ForEach(message.attachments) { attachment in
-                    Label(attachment.fileName, systemImage: attachment.mimeType.hasPrefix("image/") ? "photo" : "doc")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                if isUser { delivery }
             }
-            if !isUser { Spacer(minLength: 40) }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("ownMessage")
+        case .peer(let chrome):
+            othersRow(name: chrome.name, tint: SenderAvatar.color(hue: chrome.hue).opacity(0.14), identifier: "peerMessage") {
+                SenderAvatar(initials: chrome.initials, hue: chrome.hue)
+            }
+        case .agent(let id):
+            othersRow(name: agentName(id), tint: Color.secondary.opacity(0.12), identifier: "agentMessage") {
+                Image(systemName: "cpu").font(.system(size: 11)).foregroundStyle(.white)
+                    .frame(width: 24, height: 24).background(Color.secondary, in: Circle())
+            }
+        case .agentReply:
+            HStack(alignment: .top, spacing: 0) {
+                VStack(alignment: .leading, spacing: 6) {
+                    if !message.text.isEmpty { MarkdownMessageView(text: message.text) }
+                    attachmentList
+                }
+                Spacer(minLength: 40)
+            }
+        }
+    }
+
+    private func othersRow(name: String, tint: Color, identifier: String, @ViewBuilder avatar: () -> some View) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            avatar()
+            VStack(alignment: .leading, spacing: 4) {
+                Text(name).font(.caption).foregroundStyle(.secondary)
+                bubble(tint: tint)
+                attachmentList
+            }
+            Spacer(minLength: 80)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(identifier)
+    }
+
+    @ViewBuilder
+    private func bubble(tint: Color) -> some View {
+        if !message.text.isEmpty {
+            Text(message.text)
+                .textSelection(.enabled)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(tint, in: RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    private var attachmentList: some View {
+        ForEach(message.attachments) { attachment in
+            Label(attachment.fileName, systemImage: attachment.mimeType.hasPrefix("image/") ? "photo" : "doc")
+                .font(.callout)
+                .foregroundStyle(.secondary)
         }
     }
 

@@ -19,6 +19,25 @@ import uuid
 QUESTION = {"id": "question-1", "status": "pending", "sessionKey": "agent:fixture:main", "agentId": "fixture",
             "questions": [{"questionId": "base", "header": "Base branch", "question": "Which branch should I start from?"}]}
 
+# Every connection is the same profile, as shared-token connections are on a real Gateway.
+OWNER = {"id": "fixture-owner", "identity": {"type": "profile", "id": "fixture-owner"}, "name": "Fixture Owner"}
+OWNER_SENDER = {"senderId": "fixture-owner", "senderName": "Fixture Owner", "senderIdentity": OWNER["identity"]}
+
+# Shared mode: a teammate already wrote in the main thread.
+PEER_MESSAGE = {"role": "user", "content": [{"type": "text", "text": "Can you check the flaky login test?"}],
+                "__openclaw": {"id": "peer-1", "senderId": "fixture-peer", "senderName": "Peer Person",
+                               "senderIdentity": {"type": "profile", "id": "fixture-peer"}}}
+
+
+def peer_reply(run):
+    return {"role": "user", "content": [{"type": "text", "text": "Thanks, I'll review it."}],
+            "__openclaw": {"id": "peer-reply-" + run, "senderId": "fixture-peer", "senderName": "Peer Person",
+                           "senderIdentity": {"type": "profile", "id": "fixture-peer"}}}
+
+
+def initial_messages(shared):
+    return {"agent:fixture:main": [PEER_MESSAGE]} if shared else {}
+
 
 class Client(socketserver.StreamRequestHandler):
     def handle(self):
@@ -115,7 +134,8 @@ class Client(socketserver.StreamRequestHandler):
                 "server": {"version": "fixture-only", "connId": "fixture"},
                 "features": {"methods": ["health", "chat.send", "chat.history", "chat.abort", "sessions.list", "sessions.subscribe", "sessions.messages.subscribe", "sessions.create", "sessions.patch", "models.list"], "events": ["chat", "agent", "sessions.changed"]},
                 "auth": {"deviceToken": "synthetic-fixture-device-token", "role": "operator", "scopes": params["scopes"]},
-                "snapshot": {"sessionDefaults": {"defaultAgentId": "fixture", "mainKey": "main", "mainSessionKey": "agent:fixture:main"}},
+                "snapshot": {"sessionDefaults": {"defaultAgentId": "fixture", "mainKey": "main", "mainSessionKey": "agent:fixture:main"},
+                             "presence": [{"connectionId": "fixture", "instanceId": params["client"].get("instanceId"), "ts": self.timestamp, "user": OWNER}]},
                 "policy": {"maxPayload": 26_214_400, "maxBufferedBytes": 52_428_800, "tickIntervalMs": 15000, "attachments": {"maxBytes": 19_464_192, "maxImageBytes": 6_291_456}}})
             return
         assert self.admitted
@@ -156,7 +176,7 @@ class Client(socketserver.StreamRequestHandler):
             self.result(frame, {"sessionKey": key, "sessionId": self.server.sessions[key]["sessionId"], "messages": self.server.messages.get(key, []), "sessionInfo": {**self.server.sessions[key], "hasActiveRun": False, "activeRunIds": []}})
         elif method == "chat.send":
             self.result(frame, {"runId": params["idempotencyKey"], "status": "started"})
-            self.server.messages.setdefault(params["sessionKey"], []).append({"role": "user", "content": [{"type": "text", "text": params["message"]}], "__openclaw": {"id": params["idempotencyKey"]}})
+            self.server.messages.setdefault(params["sessionKey"], []).append({"role": "user", "content": [{"type": "text", "text": params["message"]}], "__openclaw": {"id": params["idempotencyKey"], "idempotencyKey": params["idempotencyKey"] + ":user", **OWNER_SENDER}})
             threading.Thread(target=self.respond, args=(params,), daemon=True).start()
         elif method == "chat.abort":
             with self.lock:
@@ -188,6 +208,9 @@ class Client(socketserver.StreamRequestHandler):
                 if run in self.stopped:
                     return
                 self.server.messages[key].append(message)
+                if getattr(self.server, "shared", False):
+                    # The teammate answers while the run settles, so only a history read shows it.
+                    self.server.messages[key].append(peer_reply(run))
                 self.finished.add(run)
                 self.emit("chat", {"runId": run, "sessionKey": key, "state": "final", "message": message})
         except (ConnectionError, BrokenPipeError, OSError):
@@ -204,11 +227,13 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--pairing", action="store_true", help="reject every connect with a pairing request")
     parser.add_argument("--question", action="store_true", help="hold one pending question in the main thread")
+    parser.add_argument("--shared", action="store_true", help="seed a teammate's message in the main thread")
     options = parser.parse_args()
     with Server(("127.0.0.1", options.port), Client) as server:
         server.pairing = options.pairing
         server.question = options.question
+        server.shared = options.shared
         server.sessions = {"agent:fixture:main": {"key": "agent:fixture:main", "agentId": "fixture", "sessionId": "fixture-main", "displayName": "Main"}}
-        server.messages = {}
+        server.messages = initial_messages(options.shared)
         print(server.server_address[1], flush=True)
         server.serve_forever()

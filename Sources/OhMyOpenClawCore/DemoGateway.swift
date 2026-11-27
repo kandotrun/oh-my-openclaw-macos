@@ -5,12 +5,28 @@ public actor DemoGateway: GatewayServing {
     private var continuations: [UUID: AsyncStream<GatewayEvent>.Continuation] = [:]
     private var sessions: [ChatSession] = [
         ChatSession(key: "agent:demo:main", agentID: "demo", sessionID: "demo-main", title: "メインチャット", isMain: true),
+        ChatSession(key: "agent:demo:dashboard:team", agentID: "demo", sessionID: "demo-team", title: "チームの作業"),
         ChatSession(key: "agent:demo:dashboard:weekend", agentID: "demo", sessionID: "demo-weekend", title: "週末の小さな旅"),
     ]
     private var histories: [String: [JSONValue]] = [
         "agent:demo:main": [
-            .object(["id": .string("welcome-user"), "role": .string("user"), "content": .string("こんにちは。ここでは何ができる？")]),
+            DemoGateway.userRow("welcome-user", "こんにちは。ここでは何ができる？", sender: DemoGateway.you),
             .object(["id": .string("welcome-assistant"), "role": .string("assistant"), "content": .string("こんにちは。ここは、あなたのエージェントと話すための場所です。\n\n話を続けたいときはこのまま、新しい話題は**サイドチャット**へ。\n\n- 写真やファイルを添える\n- モデルと思考レベルを選ぶ\n- 応答中の処理を止める\n\nこの会話はデモです。接続設定から自分の Gateway につなげられます。")]),
+        ],
+        // A shared thread: two teammates and the viewer.
+        "agent:demo:dashboard:team": [
+            DemoGateway.userRow("team-hana", "ログイン画面の UI テストが時々落ちます。原因を見てもらえますか？", sender: [
+                "senderId": .string("demo-hana"), "senderName": .string("佐藤 花子"),
+                "senderIdentity": .object(["type": .string("profile"), "id": .string("demo-hana")]),
+            ]),
+            .object(["id": .string("team-answer"), "role": .string("assistant"), "content": .string("見てみます。\n\n`LoginFlowTests` が、画面の切り替わりを 2 秒しか待っていませんでした。待ち時間を 5 秒にすると、20 回続けて通りました。")]),
+            DemoGateway.userRow("team-taro", "CI でも同じ症状が出ていました。", sender: [
+                "senderId": .string("U024BE7LH"), "senderName": .string("田中 太郎"),
+                "senderIdentity": .object(["type": .string("observation"), "id": .string("U024BE7LH"), "pluginId": .string("slack"),
+                                           "accountId": .null, "senderKind": .string("human")]),
+            ]),
+            DemoGateway.userRow("team-you", "ありがとう。その修正で PR を作っておいて。", sender: DemoGateway.you),
+            .object(["id": .string("team-done"), "role": .string("assistant"), "content": .string("PR を作りました。CI の結果が出たらお知らせします。")]),
         ],
         "agent:demo:dashboard:weekend": [
             .object(["id": .string("weekend-user"), "role": .string("user"), "content": .string("週末、少し気分転換したい。")]),
@@ -26,6 +42,17 @@ public actor DemoGateway: GatewayServing {
 
     public init() {}
 
+    /// The demo viewer: named by `hello-ok` presence and stamped on every send, as a profile connection would be.
+    private static let you: [String: JSONValue] = [
+        "senderId": .string("demo-you"), "senderName": .string("あなた"),
+        "senderIdentity": .object(["type": .string("profile"), "id": .string("demo-you")]),
+    ]
+
+    private static func userRow(_ id: String, _ text: String, sender: [String: JSONValue], extra: [String: JSONValue] = [:]) -> JSONValue {
+        .object(extra.merging(["id": .string(id), "role": .string("user"), "content": .string(text),
+                               "__openclaw": .object(sender.merging(["id": .string(id)]) { $1 })]) { $1 })
+    }
+
     public func events() async -> AsyncStream<GatewayEvent> {
         let id = UUID()
         let pair = AsyncStream<GatewayEvent>.makeStream()
@@ -39,8 +66,14 @@ public actor DemoGateway: GatewayServing {
         connected = true
         return GatewayHello(payload: .object([
             "type": .string("hello-ok"), "protocol": .number(4),
-            "server": .object(["version": .string("local-demo")]),
-            "snapshot": .object(["sessionDefaults": .object(["defaultAgentId": .string("demo"), "mainSessionKey": .string("agent:demo:main"), "mainKey": .string("main")])]),
+            "server": .object(["version": .string("local-demo"), "connId": .string("demo-connection")]),
+            "snapshot": .object([
+                "sessionDefaults": .object(["defaultAgentId": .string("demo"), "mainSessionKey": .string("agent:demo:main"), "mainKey": .string("main")]),
+                "presence": .array([.object(["connectionId": .string("demo-connection"), "ts": .number(0), "user": .object([
+                    "id": .string("demo-you"), "name": .string("あなた"),
+                    "identity": .object(["type": .string("profile"), "id": .string("demo-you")]),
+                ])])]),
+            ]),
             "policy": .object(["maxPayload": .number(25 * 1024 * 1024), "attachments": .object(["maxBytes": .number(19_464_192), "maxImageBytes": .number(6 * 1024 * 1024)])]),
             "features": .object(["methods": .array(["chat.send", "chat.abort", "chat.history", "sessions.create", "sessions.list", "sessions.subscribe", "sessions.messages.subscribe", "models.list", "sessions.patch"].map(JSONValue.string))]),
         ]))
@@ -86,7 +119,7 @@ public actor DemoGateway: GatewayServing {
             guard let key = params["sessionKey"].stringValue, let id = params["idempotencyKey"].stringValue else { throw GatewayFailure(code: "INVALID_REQUEST", message: "送信先がありません。") }
             if accepted.contains(id) { return .object(["runId": .string(id), "status": .string("ok")]) }
             accepted.insert(id)
-            var user: [String: JSONValue] = ["id": .string(id + ":user"), "role": .string("user"), "content": .string(params["message"].stringValue ?? ""), "runId": .string(id)]
+            var user = DemoGateway.userRow(id + ":user", params["message"].stringValue ?? "", sender: DemoGateway.you, extra: ["runId": .string(id)]).objectValue ?? [:]
             if let attachmentArray = params["attachments"].arrayValue, !attachmentArray.isEmpty {
                 user["content"] = .array([.object(["type": .string("text"), "text": .string(params["message"].stringValue ?? "")])] + attachmentArray.map { attachment in
                     .object(["type": attachment["type"], "fileName": attachment["fileName"], "mimeType": attachment["mimeType"], "data": attachment["content"]])
