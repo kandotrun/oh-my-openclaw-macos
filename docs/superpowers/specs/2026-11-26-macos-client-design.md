@@ -60,6 +60,11 @@ Checked against OpenClaw `main` at `b1d355f` (2026-11-26, release 2026.11.10):
 - Loopback connections, including SSH port forwards, are silently approved on first pairing by default. LAN and Tailnet connections to the same host still require approval.
 - The reference client reconnects with backoff from 1 s up to 30 s and never retries automatically after a pairing or authentication refusal.
 - Under load, queued message notifications can collapse into one `sessions.changed` event whose top-level payload has `phase: "message"` and no `message`, `messageId`, or `messageSeq`. Clients refetch `chat.history` for the matching conversation. Milestone 1 implements this.
+- Shared sessions record who wrote each user row in `__openclaw`: `senderId`, `senderName`, `senderUsername`, and a typed `senderIdentity`. Readers accept only `profile`, `remote`, and `observation` identities. Channel senders are `observation`. Inbound channel rows can also carry a top-level `senderLabel`.
+  - Profile connections stamp their own profile on `chat.send`.
+  - Shared-token and password connections all become the single `gateway-owner` profile, so they count as one person.
+  - The opening message of a `sessions_create` or `sessions_spawn` session comes from an agent: its provenance is `inter_session`, and `sourceSessionKey` names the agent.
+- The viewer is the `hello-ok` `snapshot.presence` row whose `connectionId` equals `server.connId`, when its `user.identity` is a profile. Otherwise `users.self` answers. `FORBIDDEN` means the connection has no profile.
 
 ## Repository layout
 
@@ -107,6 +112,22 @@ The main window has three columns: sidebar, timeline, and inspector.
 - A running turn shows "Working for N s", a thinking indicator, and stop.
 - Approval and question cards appear in the timeline. Exec commands are shown in monospace, with allow once, allow always, and deny.
 
+### Shared sessions
+
+Team members can join a session and send messages into it. The timeline shows who wrote what:
+
+- **Other people's messages** sit on the left. Each one has an initials avatar and the sender's name.
+  - The avatar color is the Control UI's hue: FNV-1a over the UTF-16 `senderId`, modulo 360, drawn as HSL(hue, 48%, 42%).
+  - Channel senders appear by their channel name.
+- **My messages** stay on the right, as before.
+- **Agent openings** (a `sessions_create` or `sessions_spawn` task) sit on the left as the agent.
+- **What counts as mine:** a row is mine only when its `senderIdentity` is the viewer's profile. Names, untyped ids, and channel ids are never compared with the viewer.
+  - Rows without a sender stay on the right, including pending local sends.
+  - With a profileless viewer, every row that has a sender belongs to someone else, because such a viewer's own sends carry none.
+  - Until the viewer is known, the last viewer profile saved for that Gateway decides. If none is saved, every row stays on the right.
+- **Single-user sessions** look exactly as before.
+- **Not in v0.1:** profile photos, reply previews, "suggested by", and participant lists.
+
 ### Composer
 
 - Multiline input. Return sends, and Shift-Return or Option-Return inserts a newline.
@@ -152,6 +173,10 @@ All changes are test-first:
 5. **Roster activity.** Track `hasActiveRun`, `activeRunIds`, project, worktree, and last-activity time per session row for the sidebar, the inspector, and notifications.
 6. **Background narration.** Subscribe to running threads with `mode: "narration"` and keep the latest narration line per session.
 7. **Attention events.** Report when any thread's run completes or fails, and when an approval or question arrives or resolves.
+8. **Sender attribution.**
+   - User rows keep the sender the Gateway recorded, as an optional `ChatMessage.sender`.
+   - The store keeps the last viewer profile id per Gateway, also optional.
+   - A sender that cannot be read decodes as empty, so a saved store always loads.
 
 ## Mac components
 
@@ -187,12 +212,15 @@ All changes are test-first:
 Each milestone is one pull request that leaves the repository working.
 
 1. **Shared layer** (merged in #1). Core, State, tests, fixture, Mac identity, data protection keychain, collapsed notification refresh, CI.
-2. **App shell.**
+2. **App shell** (merged in #2).
    - XcodeGen project, sandbox entitlements, and icon.
    - Three-column window with a thread list and a read-only transcript.
    - Connection form, demo, and Settings with saved Gateways.
    - `justfile`, ast-grep rules, and the CI build.
-3. **Timeline and work log.** Work log projection, the work log and Markdown timeline, the IME-safe composer, attachments, and approvals and questions.
+3. **Timeline and work log**, in three pull requests:
+   - **3a. Composer** (merged in #4): the IME-safe composer, attachments, the model menu, and approvals and questions.
+   - **3b. Sender attribution:** shared-session rows on the left with name and avatar, the viewer identity, and the demo and fixture team threads.
+   - **3c. Work log:** the work log projection and the work log timeline with folds.
 4. **Threads and projects.** Project grouping, run state and elapsed time, Working and Settled sections, new thread with checkout choice, inspector, and narration.
 5. **Connection supervisor.** Sleep and wake, network changes, and backoff.
 6. **Notifications.** Attention events for every thread, notification policy, user notifications, Dock badge, and the Settings switch.
