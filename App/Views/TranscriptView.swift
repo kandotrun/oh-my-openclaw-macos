@@ -2,7 +2,6 @@ import SwiftUI
 import OhMyOpenClawCore
 
 /// The selected thread: messages, inline prompts, the running turn, and the composer.
-/// The work log arrives in milestone 3b.
 struct TranscriptView: View {
     @Bindable var model: AppModel
     @State private var loadingOlder = false
@@ -10,6 +9,8 @@ struct TranscriptView: View {
     @State private var followsBottom = true
     @State private var userScrolling = false
     @State private var nearBottom = true
+    /// Opened folds, groups, and entries. Each thread opens collapsed.
+    @State private var expandedWork: Set<String> = []
     private static let bottomID = "transcriptBottom"
 
     var body: some View {
@@ -39,10 +40,10 @@ struct TranscriptView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.top, 48)
                     }
-                    ForEach(model.messages) { message in
-                        let attribution = SenderStyle.attribution(of: message, viewer: model.timelineViewer)
-                        MessageRow(message: message, attribution: attribution, agentName: model.agentName(for:),
-                                   retry: { Task { await model.retryPending(message.id) } }).id(message.id)
+                    ForEach(Timeline.build(TimelineInput(rows: model.transcriptRows, page: model.selectedWorkLog,
+                                                         activeRunID: model.activeRunID, viewer: model.timelineViewer))) { item in
+                        TimelineItemView(item: item, expanded: $expandedWork, agentName: model.agentName(for:),
+                                         retry: { id in Task { await model.retryPending(id) } }).id(item.id)
                     }
                     ForEach(model.prompts) { prompt in
                         let answer = Binding { model.promptAnswers[prompt.id, default: ""] } set: { model.promptAnswers[prompt.id] = $0 }
@@ -89,6 +90,7 @@ struct TranscriptView: View {
         }
         .onChange(of: model.selectedSession?.id) { _, _ in
             runStartedAt = model.activity == .idle ? nil : .now
+            expandedWork = []
         }
     }
 
@@ -139,7 +141,7 @@ private struct WorkingIndicator: View {
 }
 
 /// My messages on the right, other people and agents on the left with a name, replies as Markdown.
-private struct MessageRow: View {
+struct MessageRow: View {
     let message: ChatMessage
     let attribution: Attribution
     let agentName: (String) -> String

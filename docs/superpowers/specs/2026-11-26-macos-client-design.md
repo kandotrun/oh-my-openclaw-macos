@@ -108,7 +108,12 @@ The main window has three columns: sidebar, timeline, and inspector.
 ### Timeline
 
 - User messages are right-aligned bubbles. Assistant replies render as Markdown, with monospaced code blocks and copy.
-- Each turn's tool activity collapses into "Worked for N s". Expanding it lists each tool call with its kind, a one-line summary, its state, and its duration. Expanding a call shows its output or diff, with added and removed lines colored.
+- Each settled turn's tool activity collapses into "N秒作業しました" ("Worked for N s") under its prompt.
+  - Expanding the fold lists the turn's calls. Consecutive calls of one run form a group with one summary sentence, such as 「コマンドを3回実行し、4件のファイルを読み込みました」.
+  - Each call shows its kind, a one-line summary, its state, and its duration. Expanding a call shows its command, output, exit code, or diff, with added and removed lines colored.
+  - The final answer, other people's messages, images, and failures after the answer stay outside the fold.
+  - A running turn shows its calls inline. A failed run lists every call. A turn without tools looks as before.
+  - Turns start at prompts and hidden wakes, never at steers, human-addressed notes, tool-result carriers, or continuations.
 - A running turn shows "Working for N s", a thinking indicator, and stop.
 - Approval and question cards appear in the timeline. Exec commands are shown in monospace, with allow once, allow always, and deny.
 
@@ -176,8 +181,11 @@ All changes are test-first:
 2. **Data protection keychain.** Done in milestone 1.
 3. **Collapsed message notifications.** Done in milestone 1.
 4. **Work log projection.**
-   - Keep tool calls and results from history and live `tool` events as structured entries with id, kind, summary, arguments, state, timestamps, output, and diff.
-   - Keep the existing display rules for assistant and user text.
+   - Tool calls and results from `chat.history` become structured entries with id, kind, summary, state, timing, output, exit code, and diff.
+   - Activity items set each entry's state, and routine calls are hidden.
+   - The work log lives only in memory and is rebuilt from history, so tool output never reaches disk.
+   - The existing display rules for assistant and user text stay.
+   - Live `tool` events still only drive the running-turn hint.
 5. **Roster activity.** Track `hasActiveRun`, `activeRunIds`, project, worktree, and last-activity time per session row for the sidebar, the inspector, and notifications.
 6. **Background narration.** Subscribe to running threads with `mode: "narration"` and keep the latest narration line per session.
 7. **Attention events.** Report when any thread's run completes or fails, and when an approval or question arrives or resolves.
@@ -228,7 +236,7 @@ Each milestone is one pull request that leaves the repository working.
 3. **Timeline and work log**, in three pull requests:
    - **3a. Composer** (merged in #4): the IME-safe composer, attachments, the model menu, and approvals and questions.
    - **3b. Sender attribution:** shared-session rows on the left with name and avatar, the viewer identity, and the demo and fixture team threads.
-   - **3c. Work log:** the work log projection and the work log timeline with folds.
+   - **3c. Work log:** the work log projected from history, and the timeline with folds and groups. Live tool output follows later.
 4. **Threads and projects.** Project grouping, run state and elapsed time, Working and Settled sections, new thread with checkout choice, inspector, and narration.
 5. **Connection supervisor.** Sleep and wake, network changes, and backoff.
 6. **Notifications.** Attention events for every thread, notification policy, user notifications, Dock badge, and the Settings switch.
