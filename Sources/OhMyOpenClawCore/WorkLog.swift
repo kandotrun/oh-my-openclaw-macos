@@ -28,6 +28,12 @@ public struct WorkLogEntry: Sendable, Equatable, Identifiable {
     /// The record that holds the call, or the result record when the call is not on this page.
     public var anchorRecordID: String
     public var resultRecordID: String?
+
+    public init(id: String, toolCallID: String, runID: String?, name: String, kind: WorkLogKind, state: WorkLogState,
+                title: String? = nil, summary: String, anchorRecordID: String) {
+        self.id = id; self.toolCallID = toolCallID; self.runID = runID; self.name = name; self.kind = kind
+        self.state = state; self.title = title; self.summary = summary; self.anchorRecordID = anchorRecordID
+    }
 }
 
 /// The work log projected from one `chat.history` page, keyed by transcript record id.
