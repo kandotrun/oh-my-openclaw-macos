@@ -19,7 +19,12 @@ final class AppModel {
     var notice: String?
     var hasMoreHistory = false
     private var store = ConversationStore()
-    private var promptRecords: [ApprovalPrompt] = []
+    private var promptRecords: [ApprovalPrompt] = [] {
+        // An answer lives exactly as long as its prompt.
+        didSet { promptAnswers = promptAnswers.filter { id, _ in promptRecords.contains { $0.id == id } } }
+    }
+    /// Answers typed into open questions, kept across thread switches.
+    var promptAnswers: [String: String] = [:]
     private var promptTargets: [String: String] = [:]
     @ObservationIgnored private var resolvedPromptIDs = Set<String>()
     private var sendingTargets = Set<String>()

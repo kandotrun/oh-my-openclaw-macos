@@ -82,6 +82,17 @@ class FixtureConcurrencyTests(unittest.TestCase):
         self.assertEqual(frames[0]["error"]["details"], {"code": "PAIRING_REQUIRED", "requestId": "req-fixture-1"})
         self.assertFalse(client.admitted)
 
+    def test_question_mode_holds_one_pending_question_in_the_main_thread(self):
+        client = self.client()
+        client.server.question = True
+        frames = []
+        client.send = frames.append
+        client.dispatch({"type": "req", "id": "list", "method": "question.list", "params": {}})
+        self.assertTrue(frames[0]["ok"])
+        [record] = frames[0]["payload"]["questions"]
+        self.assertEqual((record["status"], record["sessionKey"], record["agentId"]), ("pending", "agent:fixture:main", "fixture"))
+        self.assertEqual(len(record["questions"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

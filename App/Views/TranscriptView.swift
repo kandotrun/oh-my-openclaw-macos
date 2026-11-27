@@ -43,7 +43,8 @@ struct TranscriptView: View {
                         MessageRow(message: message, retry: { Task { await model.retryPending(message.id) } }).id(message.id)
                     }
                     ForEach(model.prompts) { prompt in
-                        PromptCard(prompt: prompt) { answer in Task { await model.resolvePrompt(prompt, answer: answer) } }
+                        let answer = Binding { model.promptAnswers[prompt.id, default: ""] } set: { model.promptAnswers[prompt.id] = $0 }
+                        PromptCard(prompt: prompt, answer: answer) { answer in Task { await model.resolvePrompt(prompt, answer: answer) } }
                     }
                     if model.activity != .idle {
                         WorkingIndicator(activity: model.activity, since: runStartedAt ?? .now)

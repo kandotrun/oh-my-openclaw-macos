@@ -2,10 +2,11 @@ import SwiftUI
 import OhMyOpenClawCore
 
 /// An exec or plugin approval, or an agent question, answered inline.
+/// The typed answer belongs to the model, so leaving the thread keeps it.
 struct PromptCard: View {
     let prompt: ApprovalPrompt
+    @Binding var answer: String
     let resolve: (String) -> Void
-    @State private var answer = ""
 
     private var isApproval: Bool { prompt.kind == "exec" || prompt.kind == "plugin" }
 
@@ -20,7 +21,10 @@ struct PromptCard: View {
                 .fixedSize(horizontal: false, vertical: true)
             if prompt.choices.isEmpty {
                 HStack {
-                    if prompt.kind == "secret" { SecureField("回答を入力", text: $answer) } else { TextField("回答を入力", text: $answer) }
+                    Group {
+                        if prompt.kind == "secret" { SecureField("回答を入力", text: $answer) } else { TextField("回答を入力", text: $answer) }
+                    }
+                    .accessibilityIdentifier("promptAnswerField")
                     Button("回答する") { resolve(answer) }
                         .disabled(answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
@@ -41,6 +45,7 @@ struct PromptCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background((isApproval ? Color.orange : Color.indigo).opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder((isApproval ? Color.orange : Color.indigo).opacity(0.3), lineWidth: 1))
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("promptCard")
     }
 

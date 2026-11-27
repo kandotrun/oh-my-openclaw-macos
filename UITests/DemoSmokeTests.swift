@@ -10,6 +10,19 @@ private func launchIsolatedApp() -> XCUIApplication {
     return app
 }
 
+/// Connects through the first-run form with a synthetic token.
+@MainActor
+private func connect(_ app: XCUIApplication, to gateway: String) {
+    let url = app.textFields["connectionURL"]
+    XCTAssertTrue(url.waitForExistence(timeout: 10))
+    url.click()
+    url.typeText(gateway)
+    let secret = app.secureTextFields["connectionSecret"]
+    secret.click()
+    secret.typeText("synthetic-token")
+    app.buttons["connectButton"].click()
+}
+
 final class DemoSmokeTests: XCTestCase {
     /// The demo never contacts a Gateway or AI provider.
     @MainActor
@@ -91,16 +104,28 @@ final class DemoSmokeTests: XCTestCase {
             throw XCTSkip("Run through `just uitest`, which starts the pairing fixture.")
         }
         let app = launchIsolatedApp()
-        let url = app.textFields["connectionURL"]
-        XCTAssertTrue(url.waitForExistence(timeout: 10))
-        url.click()
-        url.typeText(fixture)
-        let secret = app.secureTextFields["connectionSecret"]
-        secret.click()
-        secret.typeText("synthetic-token")
-        app.buttons["connectButton"].click()
+        connect(app, to: fixture)
         let commands = app.staticTexts["pairingCommands"]
         XCTAssertTrue(commands.waitForExistence(timeout: 15))
         XCTAssertTrue((commands.value as? String ?? commands.label).contains("openclaw devices approve req-fixture-1"))
+    }
+
+    /// `just uitest` starts scripts/gateway-fixture.py --question, whose main thread waits on an answer.
+    @MainActor
+    func testUnsentQuestionAnswerSurvivesSwitchingThreads() throws {
+        guard let fixture = ProcessInfo.processInfo.environment["OHMYOPENCLAW_QUESTION_FIXTURE"] else {
+            throw XCTSkip("Run through `just uitest`, which starts the question fixture.")
+        }
+        let app = launchIsolatedApp()
+        connect(app, to: fixture)
+        let answer = app.textFields["promptAnswerField"]
+        XCTAssertTrue(answer.waitForExistence(timeout: 15))
+        answer.click()
+        answer.typeText("Start from main")
+        app.buttons["newThreadButton"].click()
+        XCTAssertTrue(answer.waitForNonExistence(timeout: 5))
+        app.descendants(matching: .any).matching(identifier: "mainThreadRow").firstMatch.click()
+        XCTAssertTrue(answer.waitForExistence(timeout: 10))
+        XCTAssertEqual(answer.value as? String, "Start from main")
     }
 }
