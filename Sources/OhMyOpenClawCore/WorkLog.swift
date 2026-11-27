@@ -48,4 +48,15 @@ public struct WorkLogPage: Sendable, Equatable {
     /// Every record id on the page, so rows from elsewhere (queued inputs, local sends) can be told apart.
     public var records: Set<String> = []
     public init() {}
+
+    /// This page with an older page's records added; this page wins where both hold a record.
+    public func adding(older: WorkLogPage) -> WorkLogPage {
+        var merged = self
+        merged.entries = older.entries.merging(entries) { _, newer in newer }
+        merged.turnStarts.formUnion(older.turnStarts)
+        merged.recordTimes = older.recordTimes.merging(recordTimes) { _, newer in newer }
+        merged.failedRuns.formUnion(older.failedRuns)
+        merged.records.formUnion(older.records)
+        return merged
+    }
 }

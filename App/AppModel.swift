@@ -83,6 +83,13 @@ final class AppModel {
         [isDemo ? "local-demo" : endpoint?.absoluteString ?? "unconfigured", selectedSession?.agentID ?? "", selectedSession?.key ?? "", selectedSession?.sessionID ?? "", connectionGeneration.uuidString, selectionGeneration.uuidString].joined(separator: "|")
     }
     var messages: [ChatMessage] { store.selectedMessages.filter(\.isConversationMessage) }
+    /// Every row of the selected thread, hidden tool rows included, so the timeline can place its work.
+    var transcriptRows: [ChatMessage] { store.selectedMessages }
+    /// Work logs by thread and physical session. They are rebuilt from history and never saved,
+    /// so tool output and arguments stay off disk.
+    private var workLogs: [String: WorkLogPage] = [:]
+    var selectedWorkLog: WorkLogPage? { selectedSession.flatMap { workLogs[workLogKey($0)] } }
+    var activeRunID: String? { store.selectedID.flatMap { store.activeRunIDs[$0] } }
     /// The viewer for attribution. While unresolved, the profile this Gateway named last keeps saved rows on their side.
     var timelineViewer: ViewerIdentity {
         if case .unresolved = viewer, let cached = store.viewerProfileID { return .profile(cached) }
@@ -427,7 +434,7 @@ final class AppModel {
         connectionGeneration = UUID(); selectionGeneration = UUID()
         agentIdentityRequest = UUID(); agentIdentityTask?.cancel(); agentIdentityTask = nil
         viewerTask?.cancel(); viewerTask = nil; viewer = .unresolved
-        agentNames = [:]
+        agentNames = [:]; workLogs = [:]
         eventTask?.cancel(); eventTask = nil; refreshTask?.cancel(); refreshTask = nil
         let previous = service; service = nil; hello = nil; currentSubscription = nil
         promptRecords = []; promptTargets = [:]; questionRecords = [:]; questionAnswers = [:]
@@ -706,6 +713,9 @@ final class AppModel {
                 return
             }
             let older = ConversationStore.parseMessages(result["messages"].arrayValue ?? [], fallbackPrefix: "older:\(nextHistoryOffset)")
+            let olderWork = WorkLogProjection.project(messages: result["messages"].arrayValue ?? [], activity: result["activity"],
+                                                      fallbackPrefix: "older:\(nextHistoryOffset)")
+            workLogs[workLogKey(target)] = workLogs[workLogKey(target)].map { $0.adding(older: olderWork) } ?? olderWork
             var current = store.transcripts[target.id] ?? []
             let known = Set(current.map(\.id))
             current.insert(contentsOf: older.filter { !known.contains($0.id) }, at: 0)
@@ -754,6 +764,8 @@ final class AppModel {
         if let thinking = result["sessionInfo"]["thinkingLevel"].stringValue { resolved.thinkingLevel = thinking }
         store.upsertSession(resolved)
         let preserved = store.applyHistory(result, for: resolved, preservingOlderHistory: store.selectedID == target.id && loadedOlderHistory && resolved.sessionID == current.sessionID)
+        let page = WorkLogProjection.project(messages: result["messages"].arrayValue ?? [], activity: result["activity"], fallbackPrefix: "history")
+        workLogs[workLogKey(resolved)] = preserved > 0 ? workLogs[workLogKey(resolved)].map { page.adding(older: $0) } ?? page : page
         pendingHistoryRefresh.remove(target.id)
         if store.selectedID == target.id {
             if preserved == 0 {
@@ -966,6 +978,7 @@ final class AppModel {
         if row.objectValue?["thinkingLevel"] != nil { session.thinkingLevel = row["thinkingLevel"].stringValue }
         return session
     }
+    private func workLogKey(_ session: ChatSession) -> String { session.id + "|" + (session.sessionID ?? "") }
     private func agentFromKey(_ key: String) -> String? {
         let parts = key.split(separator: ":", maxSplits: 2)
         return parts.count == 3 && parts[0] == "agent" ? String(parts[1]) : nil
