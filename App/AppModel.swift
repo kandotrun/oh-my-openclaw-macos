@@ -240,7 +240,10 @@ final class AppModel {
             let credentials: GatewayCredentials
             if !setupCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 let setup = try GatewayEndpoint.decodeSetupCode(setupCode)
-                url = setup.url; credentials = GatewayCredentials(bootstrapToken: setup.bootstrapToken)
+                url = setup.url
+                // A setup code pairs again; the Access service token in front of the Gateway stays.
+                let stored = try connectionAccess.read(credentialKey(url))
+                credentials = GatewayCredentials(bootstrapToken: setup.bootstrapToken, access: access ?? stored?.access)
             } else {
                 let exactEndpoint = savedEndpoint ?? savedGateways.first(where: { $0.endpoint == urlText })?.endpoint
                 url = try exactEndpoint.map { try SavedGateway.exactURL($0) } ?? GatewayEndpoint.parse(urlText)

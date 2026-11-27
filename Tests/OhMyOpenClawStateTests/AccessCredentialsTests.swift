@@ -62,3 +62,16 @@ private let protectedGateway = "wss://gateway.example.com"
     #expect(keychain.made.last?.access == serviceToken)
     await app.disconnect()
 }
+
+@Test @MainActor func pairingAgainWithASetupCodeKeepsTheSavedServiceToken() async throws {
+    let keychain = MemoryKeychain()
+    let app = AppModel(persistenceFactory: { _ in MemoryDisk() }, profileRepository: TestGatewayProfileRepository(), connectionAccess: keychain.access)
+    await app.connect(urlText: protectedGateway, secret: "gateway-token", password: false, setupCode: "", access: serviceToken)
+    await app.disconnect()
+    let payload = try JSONEncoder().encode(JSONValue.object(["url": .string(protectedGateway + "/"), "bootstrapToken": .string("fresh-bootstrap")]))
+    let code = payload.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+    await app.connect(urlText: "", secret: "", password: false, setupCode: code)
+    #expect(keychain.made.last?.bootstrapToken == "fresh-bootstrap")
+    #expect(keychain.made.last?.access == serviceToken)
+    await app.disconnect()
+}

@@ -149,7 +149,7 @@ Choose a project. Choose "New worktree" or "Current checkout", as offered by `pr
 - **Disconnected.** The timeline area shows the connection form: URL with token or password, or a pasted setup code. It also offers the local demo.
 - **Cloudflare Access.** A Gateway published behind Cloudflare Access sends native clients to a login page. The form therefore takes an optional Access service token (Client ID and Client Secret).
   - The token is saved with the Gateway's credentials.
-  - It is kept when pairing swaps in a device token, and when only the Gateway token is entered again.
+  - It is kept when pairing swaps in a device token, when only the Gateway token is entered again, and when a setup code pairs the same Gateway again.
   - It is sent as `CF-Access-Client-Id` and `CF-Access-Client-Secret`, and only to the Gateway origin.
   - The socket upgrade carries it today. The image-preview and attachment-download loaders also accept it, for when the transcript starts loading media.
   - Redirects are never followed.
