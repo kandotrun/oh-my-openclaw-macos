@@ -9,7 +9,8 @@ struct ComposerView: View {
     @State private var height: CGFloat = 24
     @State private var choosingFiles = false
     @State private var inputError: String?
-    @State private var composing = false
+    /// The draft whose input-method text is still marked, if any.
+    @State private var composingOwner: String?
     /// Imports in progress per draft owner, so another thread's import never blocks this one.
     @State private var pendingImports: [String: Int] = [:]
 
@@ -20,7 +21,7 @@ struct ComposerView: View {
             if !model.attachments.isEmpty { AttachmentTray(model: model) }
             ZStack(alignment: .topLeading) {
                 // Input-method marked text is not in the draft yet; keep the placeholder out of its way.
-                if model.draftText.isEmpty && !composing {
+                if model.draftText.isEmpty && composingOwner != model.composerContextID {
                     Text("メッセージを入力（Return で送信、Shift-Return で改行）")
                         .foregroundStyle(.tertiary)
                         .padding(.top, 3)
@@ -34,7 +35,9 @@ struct ComposerView: View {
                                      model.draftText = value
                                  },
                                  onSend: send, onAttachFiles: attachFiles, onAttachImageData: attachImage,
-                                 onCompositionChange: { composing = $0 })
+                                 onCompositionChange: { composing, owner in
+                                     if composing { composingOwner = owner } else if composingOwner == owner { composingOwner = nil }
+                                 })
                     .frame(height: height)
             }
             HStack(spacing: 10) {
@@ -82,7 +85,7 @@ struct ComposerView: View {
     }
 
     private var canSubmit: Bool {
-        ComposerSubmitGate.allows(modelCanSend: model.canSend, composing: composing,
+        ComposerSubmitGate.allows(modelCanSend: model.canSend, composingOwner: composingOwner, activeOwner: model.composerContextID,
                                   pendingImports: pendingImports[model.composerContextID, default: 0])
     }
 

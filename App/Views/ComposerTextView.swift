@@ -12,7 +12,7 @@ struct ComposerTextView: NSViewRepresentable {
     var onSend: () -> Void
     var onAttachFiles: ([URL]) -> Void
     var onAttachImageData: (Data, String) -> Void
-    var onCompositionChange: (Bool) -> Void
+    var onCompositionChange: (_ composing: Bool, _ owner: String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -44,7 +44,10 @@ struct ComposerTextView: NSViewRepresentable {
         editor.onSend = onSend
         editor.onAttachFiles = onAttachFiles
         editor.onAttachImageData = onAttachImageData
-        editor.onCompositionChange = onCompositionChange
+        editor.onCompositionChange = { [weak editor] composing in
+            guard let owner = editor?.ownerID else { return }
+            onCompositionChange(composing, owner)
+        }
         editor.onTextChange = { [weak editor, weak coordinator] value in
             guard let owner = editor?.ownerID else { return }
             coordinator?.parent.onTextChange(value, owner)
