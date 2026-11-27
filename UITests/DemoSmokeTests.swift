@@ -168,6 +168,12 @@ final class DemoSmokeTests: XCTestCase {
             throw XCTSkip("Run through `just uitest`, which starts the access fixture.")
         }
         let app = launchIsolatedApp()
+        // A setup code can point at a Gateway behind Access too, so the token fields stay.
+        let setupMode = app.radioButtons["セットアップコード"]
+        XCTAssertTrue(setupMode.waitForExistence(timeout: 10))
+        setupMode.click()
+        XCTAssertTrue(app.textFields["accessClientID"].waitForExistence(timeout: 5))
+        app.radioButtons["URL と認証情報"].click()
         connect(app, to: fixture)
         XCTAssertTrue(text(containing: "Cloudflare Access のログイン", in: app).waitForExistence(timeout: 15))
         let clientID = app.textFields["accessClientID"]

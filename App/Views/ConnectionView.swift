@@ -14,9 +14,8 @@ struct ConnectionView: View {
     @State private var accessClientSecret = ""
 
     private var isConnecting: Bool { model.changingConnection || model.connectionState == .connecting }
-    private var accessEntry: AccessTokenEntry {
-        useSetupCode ? .keepSaved : AccessTokenEntry.parse(clientID: accessClientID, clientSecret: accessClientSecret)
-    }
+    /// Both connection methods can reach a Gateway behind Cloudflare Access.
+    private var accessEntry: AccessTokenEntry { AccessTokenEntry.parse(clientID: accessClientID, clientSecret: accessClientSecret) }
     private var canSubmit: Bool {
         !isConnecting && accessEntry != .incomplete &&
             !(useSetupCode ? setupCode : urlText).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -53,30 +52,28 @@ struct ConnectionView: View {
                         SecureField(usePassword ? "パスワード" : "トークン", text: $secret)
                             .accessibilityIdentifier("connectionSecret")
                     }
-                    if !useSetupCode {
-                        Section {
-                            TextField("Client ID", text: $accessClientID, prompt: Text("任意"))
-                                .autocorrectionDisabled()
-                                .accessibilityIdentifier("accessClientID")
-                            SecureField("Client Secret", text: $accessClientSecret, prompt: Text("任意"))
-                                .accessibilityIdentifier("accessClientSecret")
-                        } header: {
-                            Text("Cloudflare Access")
-                        } footer: {
-                            if accessEntry == .incomplete {
-                                Text("Client ID と Client Secret は両方入力してください。")
-                                    .font(.footnote).foregroundStyle(.red)
-                                    .accessibilityIdentifier("accessIncomplete")
-                            } else {
-                                Text("Gateway を Cloudflare Access で保護している場合は、サービストークンを入力します。保存済みのトークンは空欄のまま引き継ぎます。")
-                                    .font(.footnote).foregroundStyle(.secondary)
-                            }
+                    Section {
+                        TextField("Client ID", text: $accessClientID, prompt: Text("任意"))
+                            .autocorrectionDisabled()
+                            .accessibilityIdentifier("accessClientID")
+                        SecureField("Client Secret", text: $accessClientSecret, prompt: Text("任意"))
+                            .accessibilityIdentifier("accessClientSecret")
+                    } header: {
+                        Text("Cloudflare Access")
+                    } footer: {
+                        if accessEntry == .incomplete {
+                            Text("Client ID と Client Secret は両方入力してください。")
+                                .font(.footnote).foregroundStyle(.red)
+                                .accessibilityIdentifier("accessIncomplete")
+                        } else {
+                            Text("Gateway を Cloudflare Access で保護している場合は、サービストークンを入力します。保存済みのトークンは空欄のまま引き継ぎます。")
+                                .font(.footnote).foregroundStyle(.secondary)
                         }
                     }
                 }
                 .formStyle(.grouped)
                 .scrollDisabled(true)
-                .frame(minHeight: useSetupCode ? 170 : 400)
+                .frame(minHeight: useSetupCode ? 340 : 400)
 
                 HStack(spacing: 12) {
                     Button(isConnecting ? "接続中…" : "Gateway に接続", action: submit)
