@@ -825,9 +825,14 @@ final class AppModel {
            let runID = payload["runId"].stringValue, store.activeRunIDs[session.id] == runID {
             let data = payload["data"]
             if payload["stream"].stringValue == "tool" {
-                let name = data["name"].stringValue ?? ""
-                let ending = ["end", "result", "error"].contains(data["phase"].stringValue ?? "")
-                store.activities[session.id] = ending ? .working : (["web_search", "web_fetch", "browser"].contains(name) ? .searching : .working)
+                // A tool ends only with `result`; updates and argument deltas keep the current hint.
+                switch data["phase"].stringValue {
+                case "start":
+                    let call = ToolActivityClassifier.canonicalCall(name: data["name"].stringValue ?? "", args: data["args"])
+                    store.activities[session.id] = ToolActivityClassifier.indicatesSearching(call.name) ? .searching : .working
+                case "result": store.activities[session.id] = .working
+                default: break
+                }
             }
             return
         }
