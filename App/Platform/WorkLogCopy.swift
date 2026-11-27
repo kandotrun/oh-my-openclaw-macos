@@ -17,9 +17,6 @@ enum WorkDuration {
         if minutes == 0 { return rest == 0 ? "\(hours)時間" : "\(hours)時間\(rest)秒" }
         return "\(hours)時間\(minutes)分\(rest)秒"
     }
-
-    /// A running count: whole seconds under a minute.
-    static func elapsed(seconds: Int) -> String { seconds < 60 ? "\(max(0, seconds))秒" : format(milliseconds: seconds * 1000) }
 }
 
 /// Labels and sentences for the work log, after T3 Code's work log presentation.
@@ -34,7 +31,9 @@ enum WorkLogCopy {
             let bucket = bucket(entry.kind)
             let position = tallies.firstIndex { $0.bucket == bucket } ?? { tallies.append(Tally(bucket: bucket, first: index)); return tallies.count - 1 }()
             tallies[position].entries += 1
-            if entry.summary.isEmpty { tallies[position].pathless += 1 } else { tallies[position].paths.insert(entry.summary) }
+            // A patch can change several files; its diff lists them all.
+            let paths = entry.diff.map(\.files).flatMap { $0.isEmpty ? nil : $0 } ?? (entry.summary.isEmpty ? [] : [entry.summary])
+            if paths.isEmpty { tallies[position].pathless += 1 } else { tallies[position].paths.formUnion(paths) }
         }
         let kept = tallies.sorted { (priority($0.bucket), $0.first) < (priority($1.bucket), $1.first) }.prefix(2).sorted { $0.first < $1.first }
         var clauses = kept.map { ($0.bucket, $0.bucket == .edit ? $0.paths.count + $0.pathless : $0.entries) }

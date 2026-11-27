@@ -287,3 +287,17 @@ private func chat(_ state: String, run: String = "run", session: ChatSession = m
     #expect(store.selectedMessages.first?.text == "captured input")
     #expect(bound.params["sessionId"].stringValue == main.sessionID)
 }
+
+@Test func historyDuringTheSameRunKeepsItsSearchingHint() {
+    let session = ChatSession(key: "agent:a:main", agentID: "a", sessionID: "physical", title: "Main", isMain: true)
+    var store = ConversationStore()
+    store.upsertSession(session)
+    store.activeRunIDs[session.id] = "r1"; store.activities[session.id] = .searching
+    let page = { (run: String) -> JSONValue in
+        .object(["sessionId": .string("physical"), "messages": .array([]), "inFlightRun": .object(["runId": .string(run), "text": .string("")])])
+    }
+    store.applyHistory(page("r1"), for: session)
+    #expect(store.activities[session.id] == .searching)
+    store.applyHistory(page("r2"), for: session)
+    #expect(store.activities[session.id] == .working)
+}

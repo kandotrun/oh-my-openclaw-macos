@@ -27,6 +27,12 @@ struct ToolDiffTests {
         #expect(try #require(ToolDiff.numbered("+1 a", truncated: true)).stat == nil)
     }
 
+    @Test func onlyTheStandaloneMarkerMeansTruncated() throws {
+        let diff = try #require(ToolDiff.numbered("+3 note (truncated) here\n-4 x"))
+        #expect(diff.lines.count == 2)
+        #expect(diff.stat == ToolDiff.Stat(added: 1, removed: 1))
+    }
+
     @Test func textThatIsNotADiffIsRejected() {
         #expect(ToolDiff.numbered("raw line") == nil)
         #expect(ToolDiff.numbered(" 1 a\n 2 b") == nil)

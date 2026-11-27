@@ -19,11 +19,6 @@ struct WorkLogCopyTests {
         #expect(WorkDuration.format(milliseconds: milliseconds) == expected)
     }
 
-    @Test func elapsedSecondsCountUp() {
-        #expect(WorkDuration.elapsed(seconds: 12) == "12秒")
-        #expect(WorkDuration.elapsed(seconds: 65) == "1分5秒")
-    }
-
     @Test func summarySentenceKeepsTheTwoMostTellingKinds() {
         let commands = (0..<3).map { entry("exec\($0)", .command) }
         let reads = (0..<4).map { entry("read\($0)", .read, path: "r\($0)") }
@@ -35,6 +30,12 @@ struct WorkLogCopyTests {
         #expect(WorkLogCopy.sentence([entry("m1", .other), entry("m2", .other)]) == "ツールを2回使用しました")
         #expect(WorkLogCopy.sentence([entry("grep", .search), entry("web_search", .search), entry("web_fetch", .fetch), entry("mcp", .other)])
             == "2回検索し、1件のページを取得し、ほかに1件の操作を行いました")
+    }
+
+    @Test func aPatchCountsEveryFileItChanges() {
+        var patch = entry("apply_patch", .edit, path: "a.swift")
+        patch.diff = ToolDiff.patchEnvelope("*** Begin Patch\n*** Update File: a.swift\n@@\n-x\n+y\n*** Update File: b.swift\n@@\n-x\n+y\n*** End Patch")
+        #expect(WorkLogCopy.sentence([patch]) == "2件のファイルを変更しました")
     }
 
     @Test func entryLabelsNameWhatWasTouched() {

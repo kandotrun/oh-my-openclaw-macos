@@ -95,6 +95,40 @@ struct TimelineTests {
         #expect(chrome.name == "佐藤 花子")
     }
 
+    @Test func aHiddenWakeStartsItsOwnTurn() {
+        let records = [
+            record("u1", "user", at: 1, content: [text("直して")]),
+            record("a1", "assistant", run: "r1", at: 2, content: [text("完了しました")]),
+            record("w1", "assistant", run: "r2", at: 100, content: [call("c1", "exec", ["command": .string("uptime")])], meta: ["turnBoundary": .bool(true)]),
+            record("t1", "toolResult", run: "r2", at: 101, content: [text("ok")], extra: ["toolCallId": .string("c1")]),
+            record("w2", "assistant", run: "r2", at: 102, content: [text("定期確認は問題ありません")]),
+        ]
+        #expect(shape(build(records)) == ["message 直して", "message 完了しました", "fold 作業しました [entry c1]", "message 定期確認は問題ありません"])
+    }
+
+    @Test func aFailureThatEndsAfterTheAnswerStaysInView() {
+        let records = [
+            record("u1", "user", at: 1, content: [text("直して")]),
+            record("a1", "assistant", run: "r1", at: 2, content: [text("確認します。"), call("c1", "exec", ["command": .string("swift test")])]),
+            record("a2", "assistant", run: "r1", at: 3, content: [text("直しました。")]),
+            record("t1", "toolResult", run: "r1", at: 4, content: [text("1 failure")], extra: ["toolCallId": .string("c1"), "isError": .bool(true)]),
+        ]
+        let items = shape(build(records))
+        #expect(items.contains("entry c1"))
+        #expect(!items.contains { $0.hasPrefix("fold") && $0.contains("c1") })
+    }
+
+    @Test func commentaryBeforeACallIsNotTheAnswer() {
+        let records = Array(settled.prefix(3))
+        #expect(shape(build(records)) == ["message 直して", "fold 8秒作業しました [message 確認します。; entry c1]"])
+    }
+
+    @Test func peopleBetweenCallsKeepThemInSeparateGroups() {
+        var records = settled
+        records.insert(record("s1", "user", at: 9.5, content: [text("ついでに")], meta: ["steerTargetRunId": .string("r1")]), at: 3)
+        #expect(shape(build(records)) == ["message 直して", "fold 27秒作業しました [message 確認します。; entry c1; entry c2]", "message ついでに", "message 直しました。"])
+    }
+
     @Test func withoutAWorkLogTheTranscriptIsUnchanged() {
         let rows = ConversationStore.parseMessages(settled, fallbackPrefix: "history")
         let items = Timeline.build(TimelineInput(rows: rows, page: nil, activeRunID: nil, viewer: .unresolved))

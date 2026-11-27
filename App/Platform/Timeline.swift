@@ -44,7 +44,8 @@ struct TimelineInput {
 
 /// Turns, folds, and groups for the transcript, after T3 Code's timeline.
 enum Timeline {
-    private enum Unit { case message(ChatMessage), entry(WorkLogEntry) }
+    /// Units keep their row position, so a call whose result lands late is placed by that result.
+    private enum Unit { case message(ChatMessage, order: Int), entry(WorkLogEntry, order: Int), gap }
     private struct Turn { var prompt: ChatMessage?; var units: [Unit] = [] }
 
     static func build(_ input: TimelineInput) -> [TimelineItem] {
@@ -54,19 +55,25 @@ enum Timeline {
     private static func turns(_ input: TimelineInput) -> [Turn] {
         var turns: [Turn] = []
         let rows = input.rows
+        var lastRow: [String: Int] = [:]
+        for (index, row) in rows.enumerated() { if let source = row.sourceID { lastRow[source] = index } }
         for (index, row) in rows.enumerated() {
-            if row.isConversationMessage {
-                if startsTurn(row, page: input.page) { turns.append(Turn(prompt: row)) }
-                else {
-                    if turns.isEmpty { turns.append(Turn()) }
-                    turns[turns.count - 1].units.append(.message(row))
-                }
+            let firstOfRecord = row.sourceID == nil || index == 0 || rows[index - 1].sourceID != row.sourceID
+            // A hidden wake or a forwarded post starts a turn even without a visible prompt.
+            let boundary = firstOfRecord && row.sourceID.map { input.page?.turnStarts.contains($0) == true } == true
+            if row.isConversationMessage && startsTurn(row, page: input.page) {
+                turns.append(Turn(prompt: row))
+            } else {
+                if boundary || (turns.isEmpty && row.isConversationMessage) { turns.append(Turn()) }
+                if row.isConversationMessage { turns[turns.count - 1].units.append(.message(row, order: index)) }
             }
             // A record's work follows its last row.
-            guard let source = row.sourceID, index + 1 == rows.count || rows[index + 1].sourceID != source,
+            guard let source = row.sourceID, lastRow[source] == index,
                   let entries = input.page?.entries[source]?.filter({ !$0.isRoutine }), !entries.isEmpty else { continue }
             if turns.isEmpty { turns.append(Turn()) }
-            turns[turns.count - 1].units += entries.map(Unit.entry)
+            turns[turns.count - 1].units += entries.map { entry in
+                .entry(entry, order: max(index, entry.resultRecordID.flatMap { lastRow[$0] } ?? index))
+            }
         }
         return turns
     }
@@ -80,35 +87,52 @@ enum Timeline {
 
     private static func items(for turn: Turn, input: TimelineInput) -> [TimelineItem] {
         let head: [TimelineItem] = turn.prompt.map { [message($0, input)] } ?? []
-        let entries = turn.units.compactMap { unit -> WorkLogEntry? in if case .entry(let entry) = unit { entry } else { nil } }
+        let entries = turn.units.compactMap { unit -> WorkLogEntry? in if case .entry(let entry, _) = unit { entry } else { nil } }
         guard !entries.isEmpty else { return head + grouped(turn.units, input: input, live: false) }
         let runs = runIDs(turn, entries: entries)
         if !runs.isDisjoint(with: input.page?.failedRuns ?? []) || turn.units.contains(where: isFailedReply) {
             // A failed run lists every call, so nothing that went wrong hides in a group.
-            return head + turn.units.map { unit in
+            return head + turn.units.compactMap { unit in
                 switch unit {
-                case .message(let row): message(row, input)
-                case .entry(let entry): .entry(entry, live: false)
+                case .message(let row, _): message(row, input)
+                case .entry(let entry, _): .entry(entry, live: false)
+                case .gap: nil
                 }
             }
         }
         if let active = input.activeRunID, runs.contains(active) { return head + grouped(turn.units, input: input, live: true) }
         // Settled: fold the work, and keep the answer, people, images, and late problems in view.
-        let terminal = turn.units.lastIndex { unit in if case .message(let row) = unit { row.role == .assistant && !row.text.isEmpty } else { false } }
+        let terminal = turn.units.last { unit in
+            guard case .message(let row, _) = unit, row.role == .assistant, !row.text.isEmpty else { return false }
+            guard let page = input.page, let source = row.sourceID, page.records.contains(source) else { return true }
+            return page.finalReplies.contains(source)
+        }.flatMap(order)
         var folded: [Unit] = [], shown: [Unit] = []
-        for (index, unit) in turn.units.enumerated() {
-            switch unit {
-            case .message(let row):
-                let keep = index == terminal || row.role == .user || !row.attachments.isEmpty || terminal.map { index > $0 } == true
-                keep ? shown.append(unit) : folded.append(unit)
-            case .entry(let entry):
-                let lateProblem = terminal.map { index > $0 } == true && [.failed, .blocked].contains(entry.state)
-                lateProblem ? shown.append(unit) : folded.append(unit)
+        for unit in turn.units {
+            let keep: Bool = switch unit {
+            case .message(let row, let position):
+                position == terminal || row.role == .user || !row.attachments.isEmpty || terminal.map { position > $0 } == true
+            case .entry(let entry, let position):
+                terminal.map { position > $0 } == true && [.failed, .blocked].contains(entry.state)
+            case .gap: false
             }
+            // A row that leaves one list breaks the groups in the other.
+            if keep { shown.append(unit); folded.append(.gap) } else { folded.append(unit); shown.append(.gap) }
+        }
+        guard folded.contains(where: { if case .entry = $0 { true } else { false } }) else {
+            return head + grouped(turn.units, input: input, live: false)
         }
         let fold = TurnFold(id: "fold|" + (turn.prompt?.id ?? entries[0].id), label: label(turn, entries: entries, input: input),
                             items: grouped(folded, input: input, live: false))
-        return head + [.fold(fold)] + grouped(shown, input: input, live: false)
+        let ordered = shown.enumerated().sorted { (order($0.element) ?? $0.offset, $0.offset) < (order($1.element) ?? $1.offset, $1.offset) }.map(\.element)
+        return head + [.fold(fold)] + grouped(ordered, input: input, live: false)
+    }
+
+    private static func order(_ unit: Unit) -> Int? {
+        switch unit {
+        case .message(_, let position), .entry(_, let position): position
+        case .gap: nil
+        }
     }
 
     /// Consecutive calls of one run form a group; in a running turn the trailing calls stay a live group.
@@ -124,12 +148,14 @@ enum Timeline {
         }
         for unit in units {
             switch unit {
-            case .message(let row):
+            case .message(let row, _):
                 flush(trailing: false)
                 items.append(message(row, input))
-            case .entry(let entry):
+            case .entry(let entry, _):
                 if let last = pending.last, last.runID != entry.runID { flush(trailing: false) }
                 pending.append(entry)
+            case .gap:
+                flush(trailing: false)
             }
         }
         flush(trailing: true)
@@ -141,12 +167,12 @@ enum Timeline {
     }
 
     private static func isFailedReply(_ unit: Unit) -> Bool {
-        if case .message(let row) = unit { row.role == .assistant && row.delivery == .failed } else { false }
+        if case .message(let row, _) = unit { row.role == .assistant && row.delivery == .failed } else { false }
     }
 
     private static func runIDs(_ turn: Turn, entries: [WorkLogEntry]) -> Set<String> {
         var runs = Set(entries.compactMap(\.runID))
-        let rows = (turn.prompt.map { [$0] } ?? []) + turn.units.compactMap { unit in if case .message(let row) = unit { row } else { nil } }
+        let rows = (turn.prompt.map { [$0] } ?? []) + turn.units.compactMap { unit in if case .message(let row, _) = unit { row } else { nil } }
         for row in rows {
             if let run = row.runID { runs.insert(run) }
             if let key = row.idempotencyKey { runs.insert(key.hasSuffix(":user") ? String(key.dropLast(5)) : key) }
@@ -157,7 +183,7 @@ enum Timeline {
     /// "27秒作業しました": from the prompt to the last recorded row of the turn.
     private static func label(_ turn: Turn, entries: [WorkLogEntry], input: TimelineInput) -> String {
         guard let page = input.page, let start = turn.prompt?.sourceID.flatMap({ page.recordTimes[$0] }) else { return "作業しました" }
-        let sources = turn.units.compactMap { unit -> String? in if case .message(let row) = unit { row.sourceID } else { nil } }
+        let sources = turn.units.compactMap { unit -> String? in if case .message(let row, _) = unit { row.sourceID } else { nil } }
             + entries.flatMap { [$0.anchorRecordID, $0.resultRecordID].compactMap { $0 } }
         guard let end = sources.compactMap({ page.recordTimes[$0] }).max(), end > start else { return "作業しました" }
         return WorkDuration.format(milliseconds: Int((end.timeIntervalSince(start) * 1000).rounded())) + "作業しました"

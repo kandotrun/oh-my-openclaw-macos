@@ -27,6 +27,8 @@ public struct WorkLogEntry: Sendable, Equatable, Identifiable {
     public var isRoutine = false
     /// The record that holds the call, or the result record when the call is not on this page.
     public var anchorRecordID: String
+    /// False for a result whose call is on another page.
+    public var hasCall = true
     public var resultRecordID: String?
 
     public init(id: String, toolCallID: String, runID: String?, name: String, kind: WorkLogKind, state: WorkLogState,
@@ -47,6 +49,8 @@ public struct WorkLogPage: Sendable, Equatable {
     public var failedRuns: Set<String> = []
     /// Every record id on the page, so rows from elsewhere (queued inputs, local sends) can be told apart.
     public var records: Set<String> = []
+    /// Assistant records that answer rather than call tools: the candidates for a turn's final reply.
+    public var finalReplies: Set<String> = []
     public init() {}
 
     /// This page with an older page's records added; this page wins where both hold a record.
@@ -57,6 +61,26 @@ public struct WorkLogPage: Sendable, Equatable {
         merged.recordTimes = older.recordTimes.merging(recordTimes) { _, newer in newer }
         merged.failedRuns.formUnion(older.failedRuns)
         merged.records.formUnion(older.records)
+        merged.finalReplies.formUnion(older.finalReplies)
+        // A result whose call sits on the older page joins that call's entry.
+        for (anchor, list) in merged.entries {
+            for orphan in list where !orphan.hasCall {
+                guard let (callAnchor, index) = merged.entries.lazy.compactMap({ key, entries in
+                    entries.firstIndex { $0.hasCall && $0.resultRecordID == nil && $0.toolCallID == orphan.toolCallID
+                        && ($0.runID == nil || orphan.runID == nil || $0.runID == orphan.runID) }.map { (key, $0) }
+                }).first else { continue }
+                var call = merged.entries[callAnchor]![index]
+                // The orphan did not know the tool, so a shell's exit code decides again.
+                let shellFailed = ToolActivityClassifier.isShell(call.name) && (orphan.exitCode ?? 0) != 0
+                call.state = orphan.state == .completed && shellFailed ? .failed : orphan.state
+                call.output = orphan.output; call.outputTruncated = orphan.outputTruncated
+                call.exitCode = orphan.exitCode; call.durationMs = orphan.durationMs ?? call.durationMs
+                call.diff = orphan.diff ?? call.diff; call.resultRecordID = orphan.resultRecordID
+                if call.title == nil { call.title = orphan.title }
+                merged.entries[callAnchor]![index] = call
+                merged.entries[anchor]?.removeAll { $0.id == orphan.id }
+            }
+        }
         return merged
     }
 }

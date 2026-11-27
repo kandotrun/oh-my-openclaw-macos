@@ -144,6 +144,41 @@ struct WorkLogProjectionTests {
         #expect(WorkLogProjection.project(messages: page, activity: .null, fallbackPrefix: "history").turnStarts == ["u1", "w1", "f1"])
     }
 
+    @Test func aSubagentThatFailedToStartIsNotCountedAsStarted() throws {
+        let page = [
+            record("a1", "assistant", run: "r1", content: .array([call("c1", "sessions_spawn", ["task": .string("fix it")])])),
+            result("t1", call: "c1", run: "r1", at: 2, output: "spawn failed", isError: true),
+        ]
+        #expect(try #require(WorkLogProjection.project(messages: page, activity: .null, fallbackPrefix: "history").entries["a1"]?.first).kind == .other)
+    }
+
+    @Test func nestedToolRecordsCarryTheirInnerCall() throws {
+        let nested = record("n1", "custom", run: "r1", content: .array([
+            call("c1", "read", ["path": .string("x.swift")]),
+            .object(["type": .string("toolResult"), "role": .string("toolResult"), "id": .string("c1"), "content": .array([text("file")])]),
+        ]), extra: ["customType": .string("openclaw.nested-tool.v1")])
+        let entry = try #require(WorkLogProjection.project(messages: [nested], activity: .null, fallbackPrefix: "history").entries["n1"]?.first)
+        #expect(entry.summary == "x.swift")
+        #expect(entry.state == .completed)
+        #expect(entry.output == "file")
+    }
+
+    @Test func aCallAndItsResultOnDifferentPagesBecomeOneEntry() throws {
+        let older = WorkLogProjection.project(messages: [basePage[1]], activity: .null, fallbackPrefix: "older:0")
+        let newer = WorkLogProjection.project(messages: [basePage[2]], activity: .null, fallbackPrefix: "history")
+        let merged = newer.adding(older: older)
+        let entry = try #require(merged.entries["a1"]?.first)
+        #expect(entry.summary == "swift test")
+        #expect(entry.output == "1 failure")
+        #expect(entry.state == .failed)
+        #expect(merged.entries["t1"]?.isEmpty ?? true)
+    }
+
+    @Test func finalRepliesAreAssistantTextWithoutCalls() {
+        let page = basePage + [record("a2", "assistant", run: "r1", at: 28000, content: .array([text("直しました。")]))]
+        #expect(WorkLogProjection.project(messages: page, activity: .null, fallbackPrefix: "history").finalReplies == ["a2"])
+    }
+
     @Test func anchorsMatchTheTranscriptRows() {
         let page = basePage + [record("hidden", "system"), .object(["role": .string("assistant"), "content": .array([call("c2", "read", ["path": .string("b")])])])]
         let anchors = Set(WorkLogProjection.project(messages: page, activity: .null, fallbackPrefix: "history").entries.keys)

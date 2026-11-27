@@ -34,6 +34,10 @@ public enum WorkLogProjection {
             let run = value["__openclaw"]["runId"].stringValue ?? value["runId"].stringValue
             let blocks = value["content"].arrayValue ?? []
             if startsTurn(value, role: role, blocks: blocks) { turn += 1; page.turnStarts.insert(record.id) }
+            if role == "assistant", !blocks.contains(where: { callTypes.contains(type($0)) }),
+               !(value["stopReason"].stringValue ?? "").lowercased().hasPrefix("tool") {
+                page.finalReplies.insert(record.id)
+            }
             if resultRoles.contains(role) || (role != "user" && firstID(value) != nil && !blocks.contains { callTypes.contains(type($0)) }) {
                 attach(result: value, block: nil, record: record.id, run: run, turn: turn, calls: calls, page: &page)
                 continue
@@ -51,11 +55,19 @@ public enum WorkLogProjection {
             }
         }
         overlay(activity, on: &page)
+        // A sub-agent that failed, was blocked, or was skipped did no work of its own.
+        for (anchor, entries) in page.entries {
+            for index in entries.indices where entries[index].kind == .subagent && [.failed, .blocked, .skipped].contains(entries[index].state) {
+                page.entries[anchor]![index].kind = .other
+            }
+        }
         return page
     }
 
     private static func isVisible(_ value: JSONValue) -> Bool {
         let role = value["role"].stringValue?.lowercased() ?? ""
+        // Nested tool records are custom rows that carry an inner call and its result.
+        if value["customType"].stringValue == "openclaw.nested-tool.v1" { return value["display"].boolValue != false }
         return value["display"].boolValue != false && value["customType"].stringValue != "openclaw.runtime-context"
             && !["system", "developer", "custom"].contains(role)
     }
@@ -105,6 +117,7 @@ public enum WorkLogProjection {
             let name = ToolActivityClassifier.canonicalCall(name: value["toolName"].stringValue ?? value["tool_name"].stringValue ?? "tool", args: .null).name
             entry = WorkLogEntry(id: record + "|" + callID, toolCallID: callID, runID: run, name: name,
                                  kind: ToolActivityClassifier.kind(name: name, args: .null), state: .unknown, summary: "", anchorRecordID: record)
+            entry.hasCall = false
         }
         entry.resultRecordID = record
         entry.output = truncated && meta["reason"].stringValue == "oversized" ? nil : output.flatMap { $0.isEmpty ? nil : $0 }

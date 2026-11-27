@@ -39,7 +39,7 @@ public struct ToolDiff: Sendable, Equatable {
         var incomplete = truncated
         for row in rows(text) where !row.isEmpty {
             if row.wholeMatch(of: /\ +\.\.\./) != nil { lines.append(Line(kind: .skip, number: nil, text: "")); continue }
-            if row.contains("(truncated)") { incomplete = true; continue }
+            if row.wholeMatch(of: /\s*(?:…|\.\.\.)\((?:live output )?truncated\)(?:…|\.\.\.)\s*/) != nil { incomplete = true; continue }
             guard let match = row.wholeMatch(of: /([ +\-]) *(\d+)(?: (.*))?/), let number = Int(match.2) else { return nil }
             lines.append(Line(kind: kind(match.1.first), number: number, text: match.3.map(String.init) ?? ""))
         }
