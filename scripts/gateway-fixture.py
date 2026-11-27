@@ -170,7 +170,7 @@ class Client(socketserver.StreamRequestHandler):
             self.result(frame, {"sessionKey": key, "sessionId": self.server.sessions[key]["sessionId"], "messages": self.server.messages.get(key, []), "sessionInfo": {**self.server.sessions[key], "hasActiveRun": False, "activeRunIds": []}})
         elif method == "chat.send":
             self.result(frame, {"runId": params["idempotencyKey"], "status": "started"})
-            self.server.messages.setdefault(params["sessionKey"], []).append({"role": "user", "content": [{"type": "text", "text": params["message"]}], "__openclaw": {"id": params["idempotencyKey"], **OWNER_SENDER}})
+            self.server.messages.setdefault(params["sessionKey"], []).append({"role": "user", "content": [{"type": "text", "text": params["message"]}], "__openclaw": {"id": params["idempotencyKey"], "idempotencyKey": params["idempotencyKey"] + ":user", **OWNER_SENDER}})
             threading.Thread(target=self.respond, args=(params,), daemon=True).start()
         elif method == "chat.abort":
             with self.lock:

@@ -41,7 +41,7 @@ struct TranscriptView: View {
                     }
                     ForEach(model.messages) { message in
                         let attribution = SenderStyle.attribution(of: message, viewer: model.timelineViewer)
-                        MessageRow(message: message, attribution: attribution, agentName: agentName(attribution),
+                        MessageRow(message: message, attribution: attribution, agentName: model.agentName(for:),
                                    retry: { Task { await model.retryPending(message.id) } }).id(message.id)
                     }
                     ForEach(model.prompts) { prompt in
@@ -90,12 +90,6 @@ struct TranscriptView: View {
         .onChange(of: model.selectedSession?.id) { _, _ in
             runStartedAt = model.activity == .idle ? nil : .now
         }
-    }
-
-    /// The selected thread's agent has a known name; another agent shows its id.
-    private func agentName(_ attribution: Attribution) -> String {
-        guard case .agent(let id) = attribution, id != model.selectedSession?.agentID else { return model.agentName }
-        return id
     }
 
     @ViewBuilder
@@ -148,7 +142,7 @@ private struct WorkingIndicator: View {
 private struct MessageRow: View {
     let message: ChatMessage
     let attribution: Attribution
-    let agentName: String
+    let agentName: (String) -> String
     let retry: () -> Void
 
     var body: some View {
@@ -168,8 +162,8 @@ private struct MessageRow: View {
             othersRow(name: chrome.name, tint: SenderAvatar.color(hue: chrome.hue).opacity(0.14), identifier: "peerMessage") {
                 SenderAvatar(initials: chrome.initials, hue: chrome.hue)
             }
-        case .agent:
-            othersRow(name: agentName, tint: Color.secondary.opacity(0.12), identifier: "agentMessage") {
+        case .agent(let id):
+            othersRow(name: agentName(id), tint: Color.secondary.opacity(0.12), identifier: "agentMessage") {
                 Image(systemName: "cpu").font(.system(size: 11)).foregroundStyle(.white)
                     .frame(width: 24, height: 24).background(Color.secondary, in: Circle())
             }

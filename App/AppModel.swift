@@ -14,6 +14,8 @@ final class AppModel {
     var isDemo = false
     private var agentNames: [String: String] = [:]
     var agentName: String { selectedSession.flatMap { agentNames[$0.agentID] } ?? "エージェント" }
+    /// An agent's name once this connection has looked it up, else its id.
+    func agentName(for id: String) -> String { agentNames[id] ?? id }
     var models: [ModelOption] = []
     var errorMessage: String?
     var notice: String?

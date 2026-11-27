@@ -109,6 +109,8 @@ class FixtureConcurrencyTests(unittest.TestCase):
                 "sessionKey": "session", "message": "hi", "idempotencyKey": "run-1"}})
         [record] = client.server.messages["session"]
         self.assertEqual(record["__openclaw"]["id"], "run-1")
+        # The client reconciles its local copy with the stored row through this key.
+        self.assertEqual(record["__openclaw"]["idempotencyKey"], "run-1:user")
         self.assertEqual(record["__openclaw"]["senderIdentity"], {"type": "profile", "id": "fixture-owner"})
 
     def test_shared_mode_seeds_a_peer_message_in_the_main_thread(self):

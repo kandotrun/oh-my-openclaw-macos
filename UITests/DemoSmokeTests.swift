@@ -177,10 +177,12 @@ final class DemoSmokeTests: XCTestCase {
         composer.typeText("On it")
         composer.typeKey(.return, modifierFlags: [])
         XCTAssertTrue(text(containing: "synthetic WebSocket response", in: app).waitForExistence(timeout: 20))
-        // The settled run refreshes history, which brings my row back with my profile.
+        // The settled run refreshes history, which replaces my local copy with the stored row and its profile.
         RunLoop.current.run(until: Date().addingTimeInterval(1.5))
         XCTAssertEqual(peers.count, 1)
-        let own = app.descendants(matching: .any).matching(identifier: "ownMessage").firstMatch
-        XCTAssertTrue(text(containing: "On it", in: own).exists)
+        // My message is the thread's only own row: one copy, not the local copy beside the stored one.
+        let own = app.descendants(matching: .any).matching(identifier: "ownMessage")
+        XCTAssertEqual(own.count, 1)
+        XCTAssertTrue(text(containing: "On it", in: own.firstMatch).exists)
     }
 }

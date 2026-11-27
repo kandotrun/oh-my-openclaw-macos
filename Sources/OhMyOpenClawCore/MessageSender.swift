@@ -21,6 +21,14 @@ public struct MessageSender: Codable, Sendable, Equatable, Hashable {
         self.username = username; self.label = label; self.agentID = agentID
     }
 
+    /// Never throws: a saved sender that cannot be read becomes empty instead of making the saved store unreadable.
+    public init(from decoder: any Decoder) throws {
+        let fields = try? decoder.container(keyedBy: CodingKeys.self)
+        func read(_ key: CodingKeys) -> String? { (try? fields?.decodeIfPresent(String.self, forKey: key)) ?? nil }
+        self.init(identityKind: read(.identityKind), identityID: read(.identityID), id: read(.id), name: read(.name),
+                  username: read(.username), label: read(.label), agentID: read(.agentID))
+    }
+
     /// Only a profile identity can be the viewer; names and channel ids never are.
     public var profileID: String? { identityKind == "profile" ? identityID : nil }
 
@@ -54,7 +62,8 @@ public struct MessageSender: Codable, Sendable, Equatable, Hashable {
             guard keys == ["type", "id", "pluginId", "domain", "idKind"],
                   part(value["pluginId"]) != nil, part(value["domain"]) != nil, part(value["idKind"]) != nil else { return nil }
         case "observation":
-            guard keys.isSubset(of: ["type", "id", "pluginId", "accountId", "senderKind"]),
+            // `pluginId` and `accountId` are required keys whose value may be null.
+            guard keys == ["type", "id", "pluginId", "accountId", "senderKind"],
                   ["human", "bot", "unknown"].contains(value["senderKind"].stringValue ?? ""),
                   value["pluginId"] == .null || part(value["pluginId"]) != nil,
                   value["accountId"] == .null || part(value["accountId"]) != nil else { return nil }

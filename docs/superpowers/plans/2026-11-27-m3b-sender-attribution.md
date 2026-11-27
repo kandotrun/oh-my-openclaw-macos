@@ -126,7 +126,7 @@ The rules are in the spec under "Shared sessions". The protocol facts are under 
 
 - **`MessageRow`** takes an `Attribution`:
   - `.own`: today's right-aligned bubble, identified as `ownMessage`.
-  - `.peer`: a 24 pt circle avatar with white initials on HSL(hue, 48%, 42%), the name as a caption, and a `.quaternary` bubble on the left, identified as `peerMessage`. It has no delivery or retry controls.
+  - `.peer`: a 24 pt circle avatar with white initials on HSL(hue, 48%, 42%), the name as a caption, and a bubble on the left tinted with that color at 14% opacity, identified as `peerMessage`. The Control UI tints peer bubbles by the same hue. It has no delivery or retry controls.
   - `.agent`: the same layout as a peer, with a `cpu` symbol and the agent's name.
   - `.agentReply`: today's Markdown reply.
 

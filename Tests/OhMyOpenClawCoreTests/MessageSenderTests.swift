@@ -53,6 +53,7 @@ struct MessageSenderTests {
         .object(["type": .string("profile"), "id": .string(String(repeating: "a", count: 513))]),
         .object(["type": .string("profile"), "id": .string("p2"), "extra": .string("x")]),
         .object(["type": .string("observation"), "id": .string("42"), "pluginId": .null, "accountId": .null, "senderKind": .string("robot")]),
+        .object(["type": .string("observation"), "id": .string("42"), "pluginId": .string("telegram"), "senderKind": .string("human")]),
         .object(["type": .string("remote"), "id": .string("U1"), "pluginId": .string("slack"), "domain": .string(""), "idKind": .string("user")]),
         .string("profile:p2"),
     ])
@@ -184,5 +185,18 @@ struct SenderStoreTests {
         #expect(message.sender?.profileID == "p2")
         let roundTrip = try JSONDecoder().decode(ChatMessage.self, from: JSONEncoder().encode(message))
         #expect(roundTrip == message)
+    }
+
+    @Test func savedSenderThatCannotBeReadDecodesAsEmpty() throws {
+        let wrongType = """
+        {"id":"m1","role":"user","text":"hi","attachments":[],"delivery":"complete","sender":{"identityKind":5,"name":"Hana"}}
+        """
+        let message = try JSONDecoder().decode(ChatMessage.self, from: Data(wrongType.utf8))
+        #expect(message.sender?.identityKind == nil)
+        #expect(message.sender?.name == "Hana")
+        let notAnObject = """
+        {"id":"m2","role":"user","text":"hi","attachments":[],"delivery":"complete","sender":"garbage"}
+        """
+        #expect(try JSONDecoder().decode(ChatMessage.self, from: Data(notAnObject.utf8)).sender == MessageSender())
     }
 }
