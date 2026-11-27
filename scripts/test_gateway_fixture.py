@@ -120,6 +120,17 @@ class FixtureConcurrencyTests(unittest.TestCase):
         self.assertEqual(peer["__openclaw"]["senderName"], "Peer Person")
         self.assertEqual(peer["__openclaw"]["senderIdentity"], {"type": "profile", "id": "fixture-peer"})
 
+    def test_shared_mode_has_the_teammate_answer_once_my_run_settles(self):
+        client = self.client()
+        client.server.shared = True
+        client.server.messages = {"agent:fixture:main": []}
+        client.send = [].append
+        with patch.object(fixture.time, "sleep"):
+            client.respond({"idempotencyKey": "run-1", "sessionKey": "agent:fixture:main"})
+        reply = client.server.messages["agent:fixture:main"][-1]
+        self.assertEqual(reply["content"][0]["text"], "Thanks, I'll review it.")
+        self.assertEqual(reply["__openclaw"]["senderIdentity"], {"type": "profile", "id": "fixture-peer"})
+
     def test_question_mode_holds_one_pending_question_in_the_main_thread(self):
         client = self.client()
         client.server.question = True

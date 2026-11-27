@@ -29,6 +29,12 @@ PEER_MESSAGE = {"role": "user", "content": [{"type": "text", "text": "Can you ch
                                "senderIdentity": {"type": "profile", "id": "fixture-peer"}}}
 
 
+def peer_reply(run):
+    return {"role": "user", "content": [{"type": "text", "text": "Thanks, I'll review it."}],
+            "__openclaw": {"id": "peer-reply-" + run, "senderId": "fixture-peer", "senderName": "Peer Person",
+                           "senderIdentity": {"type": "profile", "id": "fixture-peer"}}}
+
+
 def initial_messages(shared):
     return {"agent:fixture:main": [PEER_MESSAGE]} if shared else {}
 
@@ -202,6 +208,9 @@ class Client(socketserver.StreamRequestHandler):
                 if run in self.stopped:
                     return
                 self.server.messages[key].append(message)
+                if getattr(self.server, "shared", False):
+                    # The teammate answers while the run settles, so only a history read shows it.
+                    self.server.messages[key].append(peer_reply(run))
                 self.finished.add(run)
                 self.emit("chat", {"runId": run, "sessionKey": key, "state": "final", "message": message})
         except (ConnectionError, BrokenPipeError, OSError):
@@ -223,6 +232,7 @@ if __name__ == "__main__":
     with Server(("127.0.0.1", options.port), Client) as server:
         server.pairing = options.pairing
         server.question = options.question
+        server.shared = options.shared
         server.sessions = {"agent:fixture:main": {"key": "agent:fixture:main", "agentId": "fixture", "sessionId": "fixture-main", "displayName": "Main"}}
         server.messages = initial_messages(options.shared)
         print(server.server_address[1], flush=True)
