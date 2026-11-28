@@ -29,9 +29,15 @@ private struct GatewaySettings: View {
         Form {
             Section("接続") {
                 LabeledContent("状態", value: status)
+                if let identity = model.accessIdentity {
+                    LabeledContent("Cloudflare Access") {
+                        Text(AccessSignInCopy.signedIn(as: identity)).accessibilityIdentifier("accessSignedInAs")
+                    }
+                }
                 HStack {
+                    // A browser sign-in's own connect comes next.
                     Button("再接続") { Task { await model.retryConnection() } }
-                        .disabled(busy || (model.activeGateway == nil && !model.isDemo))
+                        .disabled(busy || model.isSigningInToAccess || (model.activeGateway == nil && !model.isDemo))
                     Button("接続を切る", role: .destructive) { Task { await model.disconnect() } }
                         .disabled(model.changingConnection || model.connectionState == .disconnected)
                 }

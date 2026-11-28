@@ -18,7 +18,7 @@ struct PairingGuidanceView: View {
                 .textSelection(.enabled)
                 .accessibilityIdentifier("pairingCommands")
             Button("承認後に再接続") { Task { await model.retryConnection() } }
-                .disabled(isConnecting)
+                .disabled(isConnecting || model.isSigningInToAccess)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)

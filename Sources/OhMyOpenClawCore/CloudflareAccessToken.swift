@@ -2,7 +2,7 @@ import Foundation
 
 /// A Cloudflare Access service token for a Gateway published behind Cloudflare Access.
 /// Requests carry it only to the configured Gateway origin, and they never follow redirects.
-public struct CloudflareAccessToken: Codable, Sendable, Equatable {
+public struct CloudflareAccessToken: Codable, Sendable, Equatable, CloudflareAccessCredential {
     public let clientID: String
     public let clientSecret: String
 

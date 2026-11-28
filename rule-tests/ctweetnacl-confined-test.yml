@@ -1,0 +1,9 @@
+id: ctweetnacl-confined
+valid:
+  - import CryptoKit
+  - import OhMyOpenClawCore
+invalid:
+  - import CTweetNaCl
+  - internal import CTweetNaCl
+  - "@_implementationOnly import CTweetNaCl"
+  - import func CTweetNaCl.crypto_box_curve25519xsalsa20poly1305_tweet_open_afternm

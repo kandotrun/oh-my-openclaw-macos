@@ -1,3 +1,4 @@
+import http.client
 import importlib.util
 from pathlib import Path
 import threading
@@ -137,6 +138,60 @@ class FixtureConcurrencyTests(unittest.TestCase):
         self.assertTrue(refusal.startswith(b"HTTP/1.1 302 "))
         self.assertIn(b"Location: https://fixture.cloudflareaccess.com/", refusal)
         self.assertIsNone(fixture.access_refusal(dict(fixture.ACCESS_TOKEN), required=True))
+
+    def test_signin_mode_refuses_a_connect_that_no_person_stands_behind(self):
+        # Access let a service token through, so the trusted-proxy Gateway finds no user to authenticate.
+        client = self.client()
+        client.server.signin = fixture.access_fixture.AccessFixture(61234)
+        client.person = False
+        frames = []
+        self.connect(client, frames)
+        self.assertFalse(frames[0]["ok"])
+        self.assertEqual(frames[0]["error"]["code"], "INVALID_REQUEST")
+        self.assertEqual(frames[0]["error"]["details"]["authReason"], "trusted_proxy_user_missing")
+        self.assertFalse(client.admitted)
+
+    def test_signin_mode_admits_the_person_and_answers_the_access_rpcs(self):
+        client = self.client()
+        client.server.signin = fixture.access_fixture.AccessFixture(61234)
+        client.person = True
+        frames = []
+        self.connect(client, frames)
+        self.assertEqual(frames[0]["payload"]["type"], "hello-ok")
+        client.dispatch({"type": "req", "id": "audit", "method": "fixture.accessAudit", "params": {}})
+        client.dispatch({"type": "req", "id": "expire", "method": "fixture.expireAccess", "params": {}})
+        self.assertEqual(frames[1]["payload"], {"leaks": [], "cliRequests": 0})
+        self.assertEqual(frames[2]["payload"], {"expired": 0})
+
+    def test_the_access_rpcs_exist_only_in_signin_mode(self):
+        client = self.client()
+        frames = []
+        client.send = frames.append
+        for method in ("fixture.accessAudit", "fixture.expireAccess"):
+            client.dispatch({"type": "req", "id": method, "method": method, "params": {}})
+        self.assertEqual([frame["error"]["code"] for frame in frames], ["INVALID_REQUEST", "INVALID_REQUEST"])
+
+    def test_signin_mode_answers_plain_requests_as_cloudflare_access_on_the_gateway_port(self):
+        server = fixture.Server(("127.0.0.1", 0), fixture.Client)
+        port = server.server_address[1]
+        server.signin = fixture.access_fixture.AccessFixture(port)
+        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+        try:
+            metadata = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+            metadata.request("HEAD", "/", headers={"cf-access-metadata-request": "true"})
+            answer = metadata.getresponse()
+            self.assertEqual(answer.status, 200)
+            self.assertEqual(answer.getheader("cf-access-metadata").count("."), 2)
+            metadata.close()
+            keys = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+            keys.request("GET", "/cdn-cgi/access/certs")
+            answer = keys.getresponse()
+            self.assertEqual(answer.status, 200)
+            self.assertIn("fixture-rfc7515", answer.read().decode())
+            keys.close()
+        finally:
+            server.shutdown()
+            server.server_close()
 
     def test_question_mode_holds_one_pending_question_in_the_main_thread(self):
         client = self.client()

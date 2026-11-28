@@ -1,0 +1,12 @@
+id: ctweetnacl-confined
+language: Swift
+severity: error
+rule:
+  kind: import_declaration
+  has:
+    kind: identifier
+    regex: '^CTweetNaCl(\.|$)'
+message: Only Sources/OhMyOpenClawCore/NaClBox.swift may import the vendored TweetNaCl C module.
+note: Call NaClBox from OhMyOpenClawCore instead, so unsafe C pointers stay behind one typed Swift API.
+ignores:
+  - Sources/OhMyOpenClawCore/NaClBox.swift

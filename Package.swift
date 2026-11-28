@@ -6,7 +6,9 @@ let package = Package(
     platforms: [.macOS(.v27)],
     products: [.library(name: "OhMyOpenClawCore", targets: ["OhMyOpenClawCore"])],
     targets: [
-        .target(name: "OhMyOpenClawCore"),
+        // Verbatim TweetNaCl 20140427 (public domain) plus randombytes.c; only Core imports it.
+        .target(name: "CTweetNaCl", cSettings: [.disableWarning("shorten-64-to-32")]),
+        .target(name: "OhMyOpenClawCore", dependencies: ["CTweetNaCl"]),
         // The app target compiles App/ directly; this target exposes the same files to swift test.
         .target(name: "OhMyOpenClawState", dependencies: ["OhMyOpenClawCore"], path: "App",
                 exclude: ["AppEnvironment.swift", "AppIcon.icon", "OhMyOpenClawApp.swift", "Platform", "PrivacyInfo.xcprivacy", "Views"],

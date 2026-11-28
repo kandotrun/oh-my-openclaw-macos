@@ -62,7 +62,7 @@ struct ConnectionStatusBar: View {
             if canReconnect {
                 Button("再接続") { Task { await model.retryConnection() } }
                     .controlSize(.small)
-                    .disabled(model.changingConnection)
+                    .disabled(model.changingConnection || model.isSigningInToAccess)
             }
         }
         .padding(.horizontal, 12)

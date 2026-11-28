@@ -112,6 +112,38 @@ final class LocalGatewayProfileRepository: GatewayProfilePersisting {
     }
 }
 
+/// Signs a person in to the Cloudflare Access application in front of a Gateway, through the system
+/// browser. The browser opens only here, and only after a user action asked for it.
+@MainActor
+struct CloudflareAccessAuthenticator {
+    /// Verifies the Access application in front of `gateway`, shows the browser link through `showLink`
+    /// (with whether the browser opened, and the verified Gateway host and team domain), and returns
+    /// the session once the person has signed in.
+    var signIn: @MainActor (_ gateway: URL, _ showLink: @escaping @MainActor (_ link: URL, _ opened: Bool, _ host: String, _ team: String) -> Void)
+        async throws -> CloudflareAccessSession
+
+    /// No browser sign-in, as in tests and the UI tests' ephemeral store without the sign-in fixture.
+    static var unavailable: Self {
+        Self(signIn: { _, _ in
+            throw GatewayFailure(code: "ACCESS_SIGN_IN_UNAVAILABLE", message: "この環境ではブラウザで Cloudflare Access にサインインできません。")
+        })
+    }
+
+    /// The sign-in `cloudflared access login` performs: verify the application, open the browser at the
+    /// link for a fresh transfer key, then wait up to five minutes for the relay to hand over the session.
+    /// `openBrowser` returns false when the browser could not be opened, and the link is shown instead.
+    static func live(endpoints: CloudflareAccessEndpoints = .cloudflare, openBrowser: @escaping @MainActor (URL) -> Bool) -> Self {
+        Self(signIn: { gateway, showLink in
+            let application = try await CloudflareAccessSignIn.discover(gateway, endpoints: endpoints, now: Date())
+            let key = CloudflareAccessTransferKey()
+            let link = try CloudflareAccessSignIn.signInURL(application, key: key)
+            showLink(link, openBrowser(link), application.url.host() ?? "", application.authDomain)
+            return try await CloudflareAccessSignIn.awaitSession(application, key: key, endpoints: endpoints,
+                                                                 deadline: Date().addingTimeInterval(5 * 60))
+        })
+    }
+}
+
 /// A narrow seam lets state tests connect to synthetic actors without reading Keychain or device identity.
 @MainActor
 struct GatewayConnectionAccess {
@@ -119,6 +151,11 @@ struct GatewayConnectionAccess {
     var write: (GatewayCredentials, String) throws -> Void
     var delete: (String) throws -> Void
     var makeService: (URL, GatewayCredentials) throws -> any GatewayServing
+    var accessAuthenticator: CloudflareAccessAuthenticator = .unavailable
+    /// The wall clock that setup codes and Cloudflare Access sessions expire on.
+    var now: () -> Date = { Date() }
+    /// Waits out a duration, such as the time until a session expires. Tests resume it themselves.
+    var sleep: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
 
     static var live: Self {
         Self(read: { try CredentialStore.read(GatewayCredentials.self, key: $0) },

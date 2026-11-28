@@ -31,7 +31,11 @@ public enum GatewayEndpoint {
         return url
     }
 
-    public static func decodeSetupCode(_ code: String) throws -> SetupCode {
+    /// Shown when a setup code has expired, and its bootstrap token with it.
+    public static let setupExpiredMessage = "セットアップコードの有効期限が切れています。新しいコードを発行してください。"
+
+    /// The setup code's Gateway and bootstrap token, as of `now`: an expired code is refused.
+    public static func decodeSetupCode(_ code: String, now: Date = Date()) throws -> SetupCode {
         var value = code.trimmingCharacters(in: .whitespacesAndNewlines)
         if value.lowercased().hasPrefix("oc-pair://") { value = String(value.dropFirst("oc-pair://".count)) }
         guard !value.isEmpty, value.count <= 32_768,
@@ -49,8 +53,8 @@ public enum GatewayEndpoint {
         var expires: Double?
         if let raw = payload.objectValue?["expiresAtMs"] {
             guard let number = raw.numberValue, number.isFinite, number >= 0, number <= 9_007_199_254_740_991, number.rounded() == number else { throw invalidCode() }
-            guard number > Date().timeIntervalSince1970 * 1000 else {
-                throw GatewayFailure(code: "SETUP_EXPIRED", message: "セットアップコードの有効期限が切れています。新しいコードを発行してください。")
+            guard number > now.timeIntervalSince1970 * 1000 else {
+                throw GatewayFailure(code: "SETUP_EXPIRED", message: setupExpiredMessage)
             }
             expires = number
         }
