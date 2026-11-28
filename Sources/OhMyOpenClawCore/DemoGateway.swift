@@ -16,10 +16,25 @@ public actor DemoGateway: GatewayServing {
         // A shared thread: two teammates and the viewer.
         "agent:demo:dashboard:team": [
             DemoGateway.userRow("team-hana", "ログイン画面の UI テストが時々落ちます。原因を見てもらえますか？", sender: [
-                "senderId": .string("demo-hana"), "senderName": .string("佐藤 花子"),
+                "senderId": .string("demo-hana"), "senderName": .string("佐藤 花子"), "recordTimestampMs": .number(1_795_700_001_000),
                 "senderIdentity": .object(["type": .string("profile"), "id": .string("demo-hana")]),
             ]),
-            .object(["id": .string("team-answer"), "role": .string("assistant"), "content": .string("見てみます。\n\n`LoginFlowTests` が、画面の切り替わりを 2 秒しか待っていませんでした。待ち時間を 5 秒にすると、20 回続けて通りました。")]),
+            DemoGateway.assistantRow("team-look", run: "team-run", [
+                DemoGateway.text("見てみます。"),
+                .object(["type": .string("toolCall"), "id": .string("team-c1"), "name": .string("exec"),
+                         "arguments": .object(["command": .string("swift test --filter LoginFlowTests")])]),
+            ], at: .number(1_795_700_003_000)),
+            DemoGateway.resultRow("team-t1", run: "team-run", callID: "team-c1", output: "LoginFlowTests.testSignIn failed: timed out after 2.0 seconds",
+                                  details: ["exitCode": .number(1), "durationMs": .number(6200)], at: .number(1_795_700_009_000)),
+            DemoGateway.assistantRow("team-edit", run: "team-run", [
+                .object(["type": .string("toolCall"), "id": .string("team-c2"), "name": .string("edit"),
+                         "arguments": .object(["path": .string("UITests/LoginFlowTests.swift")])]),
+            ], at: .number(1_795_700_010_000)),
+            DemoGateway.resultRow("team-t2", run: "team-run", callID: "team-c2", output: "Edited UITests/LoginFlowTests.swift",
+                                  details: ["diff": .string(" 41 let field = app.textFields[\"email\"]\n-42 XCTAssertTrue(field.waitForExistence(timeout: 2))\n+42 XCTAssertTrue(field.waitForExistence(timeout: 5))")],
+                                  at: .number(1_795_700_011_000)),
+            DemoGateway.assistantRow("team-answer", run: "team-run", [DemoGateway.text("`LoginFlowTests` が、画面の切り替わりを 2 秒しか待っていませんでした。待ち時間を 5 秒にすると、20 回続けて通りました。")],
+                                     at: .number(1_795_700_031_000)),
             DemoGateway.userRow("team-taro", "CI でも同じ症状が出ていました。", sender: [
                 "senderId": .string("U024BE7LH"), "senderName": .string("田中 太郎"),
                 "senderIdentity": .object(["type": .string("observation"), "id": .string("U024BE7LH"), "pluginId": .string("slack"),
@@ -51,6 +66,45 @@ public actor DemoGateway: GatewayServing {
     private static func userRow(_ id: String, _ text: String, sender: [String: JSONValue], extra: [String: JSONValue] = [:]) -> JSONValue {
         .object(extra.merging(["id": .string(id), "role": .string("user"), "content": .string(text),
                                "__openclaw": .object(sender.merging(["id": .string(id)]) { $1 })]) { $1 })
+    }
+
+    /// The demo run's tool calls: a passing test, a read, and an edit with a numbered diff.
+    private static let steps: [(name: String, args: [String: JSONValue], output: String, details: [String: JSONValue])] = [
+        ("exec", ["command": .string("swift test --filter Greeting")], "Test Suite 'Greeting' passed.\nExecuted 3 tests, with 0 failures",
+         ["exitCode": .number(0), "durationMs": .number(812)]),
+        ("read", ["path": .string("Sources/Greeting.swift")], "let greeting = \"Hello\"", [:]),
+        ("edit", ["path": .string("Sources/Greeting.swift")], "Edited Sources/Greeting.swift",
+         ["diff": .string(" 1 import Foundation\n-2 let greeting = \"Hello\"\n+2 let greeting = \"こんにちは\"")]),
+    ]
+
+    private static func text(_ value: String) -> JSONValue { .object(["type": .string("text"), "text": .string(value)]) }
+
+    private static func now() -> JSONValue { .number((Date().timeIntervalSince1970 * 1000).rounded()) }
+
+    private static func assistantRow(_ id: String, run: String?, _ content: [JSONValue], at time: JSONValue? = nil) -> JSONValue {
+        var metadata: [String: JSONValue] = ["id": .string(id), "recordTimestampMs": time ?? now()]
+        if let run { metadata["runId"] = .string(run) }
+        return .object(["role": .string("assistant"), "content": .array(content), "__openclaw": .object(metadata)])
+    }
+
+    /// Adds a tool call to the newest assistant record, as the agent loop writes it.
+    private static func appendCall(_ records: inout [JSONValue], callID: String, name: String, args: [String: JSONValue]) {
+        guard var last = records.last?.objectValue, var content = last["content"]?.arrayValue else { return }
+        content.append(.object(["type": .string("toolCall"), "id": .string(callID), "name": .string(name), "arguments": .object(args)]))
+        last["content"] = .array(content)
+        records[records.count - 1] = .object(last)
+    }
+
+    private static func resultRow(_ id: String, run: String?, callID: String, output: String, details: [String: JSONValue], at time: JSONValue? = nil) -> JSONValue {
+        var metadata: [String: JSONValue] = ["id": .string(id), "recordTimestampMs": time ?? now()]
+        if let run { metadata["runId"] = .string(run) }
+        return .object(["role": .string("toolResult"), "toolCallId": .string(callID), "content": .array([text(output)]),
+                        "details": .object(details), "__openclaw": .object(metadata)])
+    }
+
+    private func emitTool(_ phase: String, key: String, runID: String, callID: String, name: String, _ data: [String: JSONValue]) {
+        emit("agent", .object(["sessionKey": .string(key), "agentId": .string("demo"), "runId": .string(runID), "stream": .string("tool"),
+                               "data": .object(data.merging(["phase": .string(phase), "name": .string(name), "toolCallId": .string(callID)]) { $1 })]))
     }
 
     public func events() async -> AsyncStream<GatewayEvent> {
@@ -119,7 +173,8 @@ public actor DemoGateway: GatewayServing {
             guard let key = params["sessionKey"].stringValue, let id = params["idempotencyKey"].stringValue else { throw GatewayFailure(code: "INVALID_REQUEST", message: "送信先がありません。") }
             if accepted.contains(id) { return .object(["runId": .string(id), "status": .string("ok")]) }
             accepted.insert(id)
-            var user = DemoGateway.userRow(id + ":user", params["message"].stringValue ?? "", sender: DemoGateway.you, extra: ["runId": .string(id)]).objectValue ?? [:]
+            var user = DemoGateway.userRow(id + ":user", params["message"].stringValue ?? "", sender: DemoGateway.you.merging(["recordTimestampMs": DemoGateway.now()]) { $1 },
+                                           extra: ["runId": .string(id)]).objectValue ?? [:]
             if let attachmentArray = params["attachments"].arrayValue, !attachmentArray.isEmpty {
                 user["content"] = .array([.object(["type": .string("text"), "text": .string(params["message"].stringValue ?? "")])] + attachmentArray.map { attachment in
                     .object(["type": attachment["type"], "fileName": attachment["fileName"], "mimeType": attachment["mimeType"], "data": attachment["content"]])
@@ -168,10 +223,18 @@ public actor DemoGateway: GatewayServing {
     }
     private func respond(key: String, runID: String, input: String, attachments: Int) async {
         do {
-            try await Task.sleep(for: .milliseconds(500))
-            emit("agent", .object(["sessionKey": .string(key), "agentId": .string("demo"), "runId": .string(runID), "stream": .string("tool"), "data": .object(["name": .string("web_search"), "phase": .string("start")])]))
-            try await Task.sleep(for: .milliseconds(800))
-            emit("agent", .object(["sessionKey": .string(key), "agentId": .string("demo"), "runId": .string(runID), "stream": .string("tool"), "data": .object(["name": .string("web_search"), "phase": .string("end")])]))
+            try await Task.sleep(for: .milliseconds(400))
+            // The agent runs a test, reads a file, and edits it. History keeps each call and result for the work log.
+            histories[key, default: []].append(DemoGateway.assistantRow(runID + ":a1", run: runID, [DemoGateway.text("確認します。")]))
+            for (index, step) in DemoGateway.steps.enumerated() {
+                let callID = runID + ":c\(index + 1)"
+                emitTool("start", key: key, runID: runID, callID: callID, name: step.name, ["args": .object(step.args)])
+                if index > 0 { histories[key, default: []].append(DemoGateway.assistantRow(runID + ":a\(index + 1)", run: runID, [])) }
+                DemoGateway.appendCall(&histories[key, default: []], callID: callID, name: step.name, args: step.args)
+                try await Task.sleep(for: .milliseconds(350))
+                emitTool("result", key: key, runID: runID, callID: callID, name: step.name, ["isError": .bool(false)])
+                histories[key, default: []].append(DemoGateway.resultRow(runID + ":t\(index + 1)", run: runID, callID: callID, output: step.output, details: step.details))
+            }
             let answer = attachments > 0 ? "\(attachments)件のファイルを受け取りました。\n\nこれは**デモの応答**です。実際の Gateway に接続すると、添付したファイルとメッセージをエージェントに渡します。" : "「\(String(input.prefix(80)))」について、一緒に考えましょう。\n\nこの画面では、応答が少しずつ届きます。別の話題は左上のメニューから**新しいサイドチャット**へ。\n\n```swift\nlet conversation = \"あなたのペースで\"\nprint(conversation)\n```\n\nこれは操作を試すためのデモです。実際の回答には自分の Gateway を接続してください。"
             var sequence = 2
             let chunks = answer.chunks(ofCount: 8)
@@ -182,7 +245,7 @@ public actor DemoGateway: GatewayServing {
                 sequence += 1
                 try await Task.sleep(for: .milliseconds(80))
             }
-            histories[key, default: []].append(.object(["id": .string(runID + ":assistant"), "role": .string("assistant"), "content": .string(answer)]))
+            histories[key, default: []].append(DemoGateway.assistantRow(runID + ":assistant", run: runID, [DemoGateway.text(answer)]))
             emit("chat", chat(key: key, runID: runID, seq: sequence, state: "final"))
             runTargets[runID] = nil; runText[runID] = nil; tasks[runID] = nil
         } catch { /* Cancellation is settled by abort/disconnect. */ }

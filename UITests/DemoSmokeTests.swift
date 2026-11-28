@@ -108,6 +108,54 @@ final class DemoSmokeTests: XCTestCase {
         add(screenshot)
     }
 
+    /// A settled turn folds its work; opening it shows each call, and a failed command shows its output.
+    @MainActor
+    func testTeamThreadFoldsTheAgentsWork() throws {
+        let app = launchIsolatedApp()
+        let demo = app.buttons["tryDemo"]
+        XCTAssertTrue(demo.waitForExistence(timeout: 10))
+        demo.click()
+        let team = app.staticTexts["チームの作業"].firstMatch
+        XCTAssertTrue(team.waitForExistence(timeout: 10))
+        team.click()
+        let fold = app.buttons["workFold"].firstMatch
+        XCTAssertTrue(fold.waitForExistence(timeout: 10))
+        XCTAssertTrue((fold.label + ((fold.value as? String) ?? "")).contains("30秒作業しました") || text(containing: "30秒作業しました", in: fold).exists)
+        XCTAssertFalse(text(containing: "swift test --filter LoginFlowTests", in: app).exists)
+        fold.click()
+        // The run's two calls form one group inside the fold.
+        let group = app.buttons["workGroup"].firstMatch
+        XCTAssertTrue(group.waitForExistence(timeout: 5))
+        group.click()
+        let failing = app.buttons.matching(identifier: "workEntry").matching(NSPredicate(format: "label CONTAINS %@", "LoginFlowTests")).firstMatch
+        XCTAssertTrue(failing.waitForExistence(timeout: 5))
+        failing.click()
+        XCTAssertTrue(text(containing: "timed out after 2.0 seconds", in: app).waitForExistence(timeout: 5))
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "team-work-log"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    /// A sent message's run settles into a fold after its reply.
+    @MainActor
+    func testSendingFoldsTheRunsWorkAfterTheReply() throws {
+        let app = launchIsolatedApp()
+        let demo = app.buttons["tryDemo"]
+        XCTAssertTrue(demo.waitForExistence(timeout: 10))
+        demo.click()
+        let composer = app.textViews["composerText"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        composer.click()
+        composer.typeText("挨拶を日本語にして")
+        composer.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(text(containing: "について、一緒に考えましょう", in: app).waitForExistence(timeout: 30))
+        let fold = app.buttons["workFold"].firstMatch
+        XCTAssertTrue(fold.waitForExistence(timeout: 10))
+        fold.click()
+        XCTAssertTrue(app.buttons["workGroup"].firstMatch.waitForExistence(timeout: 5))
+    }
+
     /// Errors from Gateway actions stay visible when only the Settings window is open.
     @MainActor
     func testConnectionFailureIsShownInSettings() throws {

@@ -387,9 +387,12 @@ public struct ConversationStore: Codable, Sendable {
             // Preserve its physical target after the input receipt is reconciled.
             if settledRunTargets == nil { settledRunTargets = [:] }
             settledRunTargets?[runID] = target
+            // A refresh during the same run keeps the searching hint its live events set. An approval may have
+            // been resolved by another client, and only a local answer clears that hint, so it is not kept.
+            let searching = activeRunIDs[target.id] == runID && activities[target.id] == .searching
             activeRunIDs[target.id] = runID
             let text = inflight["text"].stringValue ?? ""
-            activities[target.id] = text.isEmpty ? .working : .responding
+            activities[target.id] = searching ? .searching : text.isEmpty ? .working : .responding
             if !text.isEmpty { rows.append(ChatMessage(id: runID + ":assistant", role: .assistant, text: text, delivery: .pending, runID: runID)) }
         } else {
             activeRunIDs[target.id] = nil; activities[target.id] = .idle
