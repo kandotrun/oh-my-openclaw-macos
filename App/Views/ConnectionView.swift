@@ -1,7 +1,8 @@
 import SwiftUI
 import OhMyOpenClawCore
 
-/// Connects to a Gateway with a URL and shared secret or a setup code, or starts the local demo.
+/// Connects to a Gateway with a URL and shared secret or a setup code, signs in to the Cloudflare Access
+/// application in front of it through the browser, or starts the local demo.
 struct ConnectionView: View {
     @Bindable var model: AppModel
     @State private var alias = ""
@@ -12,13 +13,18 @@ struct ConnectionView: View {
     @State private var useSetupCode = false
     @State private var accessClientID = ""
     @State private var accessClientSecret = ""
+    /// The sign-in row's height, which grows with the sign-in's progress. The form cannot scroll, so it
+    /// makes room for the whole row; until the first measurement this is about one button.
+    @State private var signInHeight: CGFloat = 20
 
     private var isConnecting: Bool { model.changingConnection || model.connectionState == .connecting }
     /// Both connection methods can reach a Gateway behind Cloudflare Access.
     private var accessEntry: AccessTokenEntry { AccessTokenEntry.parse(clientID: accessClientID, clientSecret: accessClientSecret) }
-    private var canSubmit: Bool {
-        !isConnecting && accessEntry != .incomplete &&
-            !(useSetupCode ? setupCode : urlText).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    private var namesGateway: Bool { !(useSetupCode ? setupCode : urlText).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var canSubmit: Bool { !isConnecting && accessEntry != .incomplete && namesGateway }
+    /// A browser sign-in sends no service token, so the token fields do not matter here.
+    private var signInStart: ConnectionFormSignIn? {
+        ConnectionFormSignIn.start(formNamesGateway: namesGateway, signIn: model.accessSignIn, connecting: isConnecting)
     }
 
     var body: some View {
@@ -53,6 +59,9 @@ struct ConnectionView: View {
                             .accessibilityIdentifier("connectionSecret")
                     }
                     Section {
+                        AccessSignInView(state: model.accessSignIn, canStart: signInStart != nil, startButtonID: "accessSignInButton",
+                                         start: signIn, cancel: { model.cancelCloudflareAccessSignIn() })
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { signInHeight = $0 }
                         TextField("Client ID", text: $accessClientID, prompt: Text("任意"))
                             .autocorrectionDisabled()
                             .accessibilityIdentifier("accessClientID")
@@ -66,14 +75,18 @@ struct ConnectionView: View {
                                 .font(.footnote).foregroundStyle(.red)
                                 .accessibilityIdentifier("accessIncomplete")
                         } else {
-                            Text("Gateway を Cloudflare Access で保護している場合は、サービストークンを入力します。保存済みのトークンは空欄のまま引き継ぎます。")
+                            Text("本人のアカウントで操作するときは、ブラウザでサインインします。自動化にはサービストークン（Client ID と Client Secret）を使います。保存済みのサインインとトークンは、空欄のまま接続すると引き継ぎます。")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
                     }
                 }
                 .formStyle(.grouped)
                 .scrollDisabled(true)
-                .frame(minHeight: useSetupCode ? 340 : 400)
+                // The sign-in row and its padding come on top of the other rows.
+                .frame(minHeight: (useSetupCode ? 340 : 400) + signInHeight + 20)
+                // A failed sign-in is repeated only until the inputs a sign-in uses change after it.
+                .onChange(of: [alias, urlText, secret, setupCode]) { model.dismissFailedCloudflareAccessSignIn() }
+                .onChange(of: [usePassword, useSetupCode]) { model.dismissFailedCloudflareAccessSignIn() }
 
                 HStack(spacing: 12) {
                     Button(isConnecting ? "接続中…" : "Gateway に接続", action: submit)
@@ -116,6 +129,27 @@ struct ConnectionView: View {
             if submittedAccess != nil, accessClientID == submittedAccessID, accessClientSecret == submittedAccessSecret {
                 accessClientID = ""; accessClientSecret = ""
             }
+        }
+    }
+
+    /// Signs in through the browser with the inputs `submit` would send, but no service token: the
+    /// session the sign-in brings back replaces a saved one. The form keeps its inputs, so that a
+    /// cancelled sign-in, which saved nothing, can start again from them. Trying a failed sign-in again
+    /// repeats it with what it was given, even if the form changed while it ran; an edit after the failure
+    /// lets go of it. An empty form signs in to the Gateway the sign-in state is for.
+    private func signIn() {
+        switch signInStart {
+        case .formInputs:
+            let submittedURL = urlText, submittedSecret = secret, submittedAlias = alias
+            let submittedCode = useSetupCode ? setupCode : "", submittedPassword = usePassword
+            Task {
+                await model.signInWithCloudflareAccess(urlText: submittedURL, secret: submittedSecret, password: submittedPassword,
+                                                       setupCode: submittedCode, alias: submittedAlias)
+            }
+        case .stateTarget:
+            Task { await model.signInWithCloudflareAccessAgain() }
+        case nil:
+            return
         }
     }
 

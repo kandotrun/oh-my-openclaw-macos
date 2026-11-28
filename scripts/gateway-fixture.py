@@ -3,7 +3,8 @@
 
 Only standard library modules are used. The fixture checks client framing and
 challenge fields; cryptographic proof verification lives in the Swift tests.
-No credentials or request content are logged.
+No credentials or request content are logged. With --signin, access_fixture.py
+plays Cloudflare Access in front of the Gateway on the same port.
 """
 import argparse
 import base64
@@ -14,6 +15,8 @@ import struct
 import threading
 import time
 import uuid
+
+import access_fixture
 
 # Question mode: the agent waits on one free-text answer in the main thread.
 QUESTION = {"id": "question-1", "status": "pending", "sessionKey": "agent:fixture:main", "agentId": "fixture",
@@ -53,14 +56,28 @@ def access_refusal(headers, required):
 class Client(socketserver.StreamRequestHandler):
     def handle(self):
         headers = {}
-        self.rfile.readline()
+        request = self.rfile.readline().decode("latin-1").split()
         while True:
             line = self.rfile.readline()
             if line in (b"\r\n", b"\n", b""):
                 break
             key, value = line.decode().split(":", 1)
             headers[key.lower()] = value.strip()
-        refusal = access_refusal(headers, getattr(self.server, "access", False))
+        signin = getattr(self.server, "signin", None)
+        if signin is not None and headers.get("upgrade", "").lower() != "websocket":
+            # Sign-in mode: the Access edge, the team domain and the relay answer every other request.
+            if len(request) >= 2:
+                try:
+                    self.wfile.write(signin.handle_http(request[0], request[1], headers))
+                    self.wfile.flush()
+                except OSError:
+                    pass
+            return
+        self.person = False
+        if signin is not None:
+            refusal, self.person = signin.admit(request[1] if len(request) >= 2 else "/", headers)
+        else:
+            refusal = access_refusal(headers, getattr(self.server, "access", False))
         if refusal:
             self.wfile.write(refusal)
             self.wfile.flush()
@@ -140,6 +157,12 @@ class Client(socketserver.StreamRequestHandler):
             assert params["device"]["nonce"] == "fixture-challenge"
             assert params["device"]["signedAt"] == self.timestamp
             assert len(params["device"]["id"]) == 64
+            if getattr(self.server, "signin", None) is not None and not self.person:
+                # Sign-in mode: Access let a service token through, so the trusted-proxy Gateway finds no user
+                # to authenticate, and refuses as OpenClaw does (src/gateway/server/ws-connection/connect-auth.ts).
+                self.send({"type": "res", "id": frame["id"], "ok": False, "error": {"code": "INVALID_REQUEST", "message": "unauthorized: trusted proxy user missing",
+                    "details": {"code": "AUTH_UNAUTHORIZED", "authReason": "trusted_proxy_user_missing", "canRetryWithDeviceToken": False}}})
+                return
             if getattr(self.server, "pairing", False):
                 # Pairing mode: every connect needs approval on the Gateway host.
                 self.send({"type": "res", "id": frame["id"], "ok": False, "error": {"code": "NOT_PAIRED", "message": "pairing required",
@@ -160,6 +183,10 @@ class Client(socketserver.StreamRequestHandler):
         elif method == "fixture.close":
             self.send_bytes(b"", opcode=8)
             self.connection.shutdown(2)
+        elif method == "fixture.accessAudit" and getattr(self.server, "signin", None) is not None:
+            self.result(frame, self.server.signin.audit())
+        elif method == "fixture.expireAccess" and getattr(self.server, "signin", None) is not None:
+            self.result(frame, {"expired": self.server.signin.expire()})
         elif method == "models.list":
             self.result(frame, {"models": [{"id": "fixture-model", "provider": "fixture", "name": "Fixture model", "manualSelectionAllowed": True, "thinkingLevels": [{"id": "low", "label": "Low"}, {"id": "high", "label": "High"}]}]})
         elif method in ("sessions.list", "sessions.subscribe"):
@@ -245,12 +272,14 @@ if __name__ == "__main__":
     parser.add_argument("--question", action="store_true", help="hold one pending question in the main thread")
     parser.add_argument("--shared", action="store_true", help="seed a teammate's message in the main thread")
     parser.add_argument("--access", action="store_true", help="require a Cloudflare Access service token on the upgrade")
+    parser.add_argument("--signin", action="store_true", help="play Cloudflare Access on this port, with a browser sign-in for a person")
     options = parser.parse_args()
     with Server(("127.0.0.1", options.port), Client) as server:
         server.pairing = options.pairing
         server.question = options.question
         server.shared = options.shared
         server.access = options.access
+        server.signin = access_fixture.AccessFixture(server.server_address[1], service_token=ACCESS_TOKEN) if options.signin else None
         server.sessions = {"agent:fixture:main": {"key": "agent:fixture:main", "agentId": "fixture", "sessionId": "fixture-main", "displayName": "Main"}}
         server.messages = initial_messages(options.shared)
         print(server.server_address[1], flush=True)

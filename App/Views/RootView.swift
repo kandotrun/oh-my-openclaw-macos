@@ -17,6 +17,11 @@ struct RootView: View {
                         .padding(12)
                     Divider()
                 }
+                if let banner = DetailContent.accessBanner(hasSessions: !model.sessions.isEmpty, signIn: model.accessSignIn) {
+                    AccessSignInBanner(model: model, banner: banner)
+                        .padding(12)
+                    Divider()
+                }
                 if model.sessions.isEmpty { ConnectionView(model: model) }
                 else { TranscriptView(model: model) }
             }

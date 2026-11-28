@@ -32,6 +32,9 @@ public struct ConversationStore: Codable, Sendable {
     public var activities: [String: ActivityState] = [:]
     /// The last profile this Gateway named as the viewer, so saved rows stay on the right side while reconnecting.
     public var viewerProfileID: String?
+    /// The person whose Cloudflare Access session last signed in to this Gateway, and so whose conversations
+    /// these are. A service token or a shared token leaves it as it is; nil before anyone has signed in.
+    public var accessOwner: CloudflareAccessAccount?
     private var runSequences: [String: Int] = [:]
     private var settledRunTargets: [String: ChatSession]?
     private var draftRevisions: [String: Int]?

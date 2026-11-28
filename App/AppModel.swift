@@ -59,8 +59,26 @@ final class AppModel {
     @ObservationIgnored private var questionAnswers: [String: [String: JSONValue]] = [:]
     @ObservationIgnored private var currentSubscription: ChatSession?
     @ObservationIgnored private var restoring = false
-    @ObservationIgnored private var reconnectTask: Task<Void, Never>?
+    @ObservationIgnored private(set) var reconnectTask: Task<Void, Never>?
     @ObservationIgnored private(set) var attemptedAutomaticRecovery = false
+    /// Where signing in to a Gateway's Cloudflare Access application stands. Never saved.
+    private(set) var accessSignIn: CloudflareAccessSignInState = .idle {
+        // What a failed sign-in was given lasts only while its failure shows.
+        didSet {
+            if case .failed(let target, _) = accessSignIn, target == failedSignIn?.url { return }
+            failedSignIn = nil
+        }
+    }
+    /// The target a failed sign-in resolved, with any unsaved password or setup code bootstrap token, so
+    /// that signing in again repeats it. Only in memory.
+    @ObservationIgnored private var failedSignIn: ConnectionTarget?
+    /// Who the active Gateway's Cloudflare Access session signs in, and until when.
+    private(set) var accessIdentity: CloudflareAccessClaims?
+    /// From checking the Access application until the connection with the sign-in's session starts.
+    var isSigningInToAccess: Bool { accessSignIn.isRunning }
+    @ObservationIgnored private var accessSignInTask: Task<Void, Never>?
+    /// Ends the connection when the application token of its Cloudflare Access session expires.
+    @ObservationIgnored private(set) var accessExpiryTask: Task<Void, Never>?
     private(set) var changingConnection = false
     @ObservationIgnored private var connectionSwitch: UUID?
     @ObservationIgnored private var sceneGeneration = UUID()
@@ -142,8 +160,10 @@ final class AppModel {
     func startDemo() async {
         guard let transaction = beginConnectionSwitch() else { return }
         defer { finishConnectionSwitch() }
+        cancelCloudflareAccessSignIn()
         reconnectTask?.cancel(); attemptedAutomaticRecovery = false
         await retireConnection()
+        accessIdentity = nil
         do {
             try validateConnectionSwitch(transaction)
             try loadProfiles()
@@ -188,6 +208,11 @@ final class AppModel {
         do {
             try loadProfiles()
             guard savedGateways.contains(where: { $0.id == profile.id }) else { return true }
+            // A sign-in for this Gateway ends here, so that it cannot save the Gateway again.
+            if accessSignIn.target?.absoluteString == profile.endpoint {
+                cancelCloudflareAccessSignIn()
+                accessSignIn = .idle
+            }
             if let transaction {
                 _ = try await persistForSwitch(transaction)
                 try validateConnectionSwitch(transaction)
@@ -206,7 +231,7 @@ final class AppModel {
 
             if transaction != nil {
                 reconnectTask?.cancel(); autoConnect = false; endpoint = nil
-                connectionState = .disconnected; errorMessage = nil
+                connectionState = .disconnected; errorMessage = nil; accessIdentity = nil
                 replaceStore(ConversationStore(), persistence: nil, namespace: nil)
                 await retireConnection()
             }
@@ -238,54 +263,238 @@ final class AppModel {
 
     private func connect(urlText: String, secret: String, password: Bool, setupCode: String, alias: String? = nil, access: CloudflareAccessToken? = nil, savedEndpoint: String?) async {
         guard !changingConnection, !inBackground, !Task.isCancelled else { return }
+        reconnectTask?.cancel(); attemptedAutomaticRecovery = false
+        let target: ConnectionTarget
+        do {
+            try loadProfiles()
+            target = try resolveTarget(urlText: urlText, secret: secret, password: password, setupCode: setupCode, alias: alias, savedEndpoint: savedEndpoint)
+        } catch { failToConnect(error); return }
+        // This connect replaces a browser sign-in that is still running.
+        cancelCloudflareAccessSignIn()
+        await connect(to: target, accessChange: access.map(AccessCredentialChange.serviceToken) ?? .keep)
+    }
+
+    /// Where a connect goes: the exact endpoint, the credentials that the form, a setup code or the
+    /// Keychain gave for it, and the name to show it by.
+    private struct ConnectionTarget {
+        let url: URL
+        let credentials: GatewayCredentials
+        let alias: String?
+        /// When the setup code that gave these credentials expires, and its bootstrap token with it.
+        var setupExpiresAt: Date? = nil
+    }
+
+    /// The target the form or a saved Gateway names. URL and setup-code errors surface here, before
+    /// anything changes, and a setup code is decoded only here.
+    private func resolveTarget(urlText: String, secret: String, password: Bool, setupCode: String, alias: String?, savedEndpoint: String?) throws -> ConnectionTarget {
+        if !setupCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let setup = try GatewayEndpoint.decodeSetupCode(setupCode, now: connectionAccess.now())
+            // A setup code pairs again; the Access credential in front of the Gateway stays.
+            return ConnectionTarget(url: setup.url, credentials: GatewayCredentials(bootstrapToken: setup.bootstrapToken), alias: alias,
+                                    setupExpiresAt: setup.expiresAtMs.map { Date(timeIntervalSince1970: $0 / 1000) })
+        }
+        let exactEndpoint = savedEndpoint ?? savedGateways.first(where: { $0.endpoint == urlText })?.endpoint
+        let url = try exactEndpoint.map { try SavedGateway.exactURL($0) } ?? GatewayEndpoint.parse(urlText)
+        let value = secret.isEmpty ? nil : secret
+        // A new token or password replaces the saved one; the Access credential stays unless another one is entered.
+        let entered = try value.map { password ? GatewayCredentials(password: $0) : GatewayCredentials(token: $0) }
+            ?? connectionAccess.read(credentialKey(url)) ?? GatewayCredentials()
+        return ConnectionTarget(url: url, credentials: entered, alias: alias)
+    }
+
+    /// Connects to a resolved target and saves its credentials with `accessChange` applied.
+    private func connect(to target: ConnectionTarget, accessChange: AccessCredentialChange) async {
+        guard !changingConnection, !inBackground, !Task.isCancelled else { return }
         var transactionStarted = false
         defer { if transactionStarted { finishConnectionSwitch() } }
         reconnectTask?.cancel(); attemptedAutomaticRecovery = false
         do {
-            try loadProfiles()
-            let url: URL
-            let credentials: GatewayCredentials
-            if !setupCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                let setup = try GatewayEndpoint.decodeSetupCode(setupCode)
-                url = setup.url
-                // A setup code pairs again; the Access service token in front of the Gateway stays.
-                let stored = try connectionAccess.read(credentialKey(url))
-                credentials = GatewayCredentials(bootstrapToken: setup.bootstrapToken, access: access ?? stored?.access)
-            } else {
-                let exactEndpoint = savedEndpoint ?? savedGateways.first(where: { $0.endpoint == urlText })?.endpoint
-                url = try exactEndpoint.map { try SavedGateway.exactURL($0) } ?? GatewayEndpoint.parse(urlText)
-                let value = secret.isEmpty ? nil : secret
-                let stored = try connectionAccess.read(credentialKey(url))
-                var entered = value.map { password ? GatewayCredentials(password: $0) : GatewayCredentials(token: $0) } ?? stored ?? GatewayCredentials()
-                // A new token or password keeps the saved Access service token unless another one is entered.
-                entered.access = access ?? stored?.access
-                credentials = entered
-            }
-            guard let transaction = beginConnectionSwitch() else { return }
+            guard let saving = try credentialsToSave(for: target, applying: accessChange),
+                  let transaction = beginConnectionSwitch() else { return }
             transactionStarted = true
             await retireConnection()
             try validateConnectionSwitch(transaction)
-            try connectionAccess.write(credentials, credentialKey(url))
-            try await loadStore(namespace: url.absoluteString, transaction: transaction)
+            if let account = saving.account { try await forgetConversations(of: target.url, unlessOwnedBy: account, transaction: transaction) }
+            try connectionAccess.write(saving.credentials, credentialKey(target.url))
+            try await loadStore(namespace: target.url.absoluteString, transaction: transaction)
             try validateConnectionSwitch(transaction)
-            endpoint = url; isDemo = false; autoConnect = true
-            var profiles = gatewayProfiles; try profiles.activate(url, alias: alias)
+            endpoint = target.url; isDemo = false; autoConnect = true
+            var profiles = gatewayProfiles; try profiles.activate(target.url, alias: target.alias)
             try profileRepository.save(profiles); gatewayProfiles = profiles
-            service = try connectionAccess.makeService(url, credentials)
-            await establishConnection()
+            try await startService(target.url, with: saving.credentials, transaction: transaction)
         } catch is CancellationError { if service == nil { connectionState = .disconnected } }
-        catch { if connectionState == .connected { errorMessage = error.localizedDescription } else { fail(error) } }
+        catch { failToConnect(error) }
+    }
+
+    /// The credentials a connect to `target` saves, `change` applied over the saved Access credential, and
+    /// the person their Cloudflare Access session signs in. Nil for a session that `applying` refused as
+    /// another origin's: connecting without it would drop the sign-in.
+    private func credentialsToSave(for target: ConnectionTarget, applying change: AccessCredentialChange) throws -> (credentials: GatewayCredentials, account: CloudflareAccessAccount?)? {
+        let stored = try connectionAccess.read(credentialKey(target.url))
+        let credentials = target.credentials.applying(change, savedWith: stored, for: target.url)
+        if case .session(let session) = change, credentials.accessSession != session { return nil }
+        return (credentials, credentials.accessSession?.account)
+    }
+
+    /// Forgets what this Mac cached for `url` when someone other than `account` owns it, before `account`'s
+    /// session is saved: transcripts, drafts, pending and retryable submissions, and the viewer profile. The
+    /// owner stays until a connect with the session hands the cache over, so a cache whose session is never
+    /// saved stays theirs. Another Gateway's conversations stay shown, because the endpoint and its store
+    /// switch together after the save.
+    private func forgetConversations(of url: URL, unlessOwnedBy account: CloudflareAccessAccount, transaction: UUID) async throws {
+        let key = digest(url.absoluteString)
+        if persistenceNamespace == key {
+            guard let owner = store.accessOwner, owner != account else { return }
+            var forgotten = ConversationStore(); forgotten.accessOwner = owner
+            adoptStore(forgotten)
+            _ = try await persistForSwitch(transaction)
+        } else {
+            let saved = try persistenceFactory(key)
+            let owner = try await saved.load().accessOwner
+            try validateConnectionSwitch(transaction)
+            guard let owner, owner != account else { return }
+            var forgotten = ConversationStore(); forgotten.accessOwner = owner
+            try await saved.save(forgotten, revision: 1)
+            try validateConnectionSwitch(transaction)
+        }
+    }
+
+    /// Connects to `endpoint`, whose conversations are the ones shown, with `credentials`, keeping who their
+    /// Cloudflare Access session signs in. That person owns the conversations from then on: someone else's are
+    /// forgotten first, and a cache from before any sign-in becomes theirs. A reconnect comes through here too,
+    /// so a session that a sign-in saved before it stopped never connects with another person's conversations.
+    private func startService(_ endpoint: URL, with credentials: GatewayCredentials, transaction: UUID) async throws {
+        if let account = credentials.accessSession?.account, store.accessOwner != account {
+            if store.accessOwner != nil { adoptStore(ConversationStore()) }
+            store.accessOwner = account
+            _ = try await persistForSwitch(transaction)
+        }
+        accessIdentity = credentials.accessSession.flatMap { CloudflareAccessClaims(jwt: $0.appToken) }
+        service = try connectionAccess.makeService(endpoint, credentials)
+        // A browser sign-in is done once its connection starts, so what the Gateway answers stands.
+        if accessSignIn == .checking(target: endpoint) { accessSignIn = .idle }
+        await establishConnection()
+    }
+
+    /// A connect that fails before it changes anything leaves a live connection as it was.
+    private func failToConnect(_ error: any Error) {
+        if connectionState == .connected { errorMessage = error.localizedDescription } else { fail(error) }
+    }
+
+    // MARK: Cloudflare Access sign-in
+
+    private static let signInFailedMessage = "Cloudflare Access にサインインできませんでした。もう一度サインインしてください。"
+    private static let signInCouldNotConnectMessage = "サインインは完了しましたが、Gateway への接続を始められませんでした。もう一度サインインしてください。"
+
+    /// Signs the person in through the browser to the Cloudflare Access application in front of the Gateway
+    /// that the form names, then connects with their session. It returns once the sign-in has ended.
+    func signInWithCloudflareAccess(urlText: String, secret: String, password: Bool, setupCode: String, alias: String? = nil) async {
+        guard canStartSignIn else { return }
+        let target: ConnectionTarget
+        do {
+            try loadProfiles()
+            target = try resolveTarget(urlText: urlText, secret: secret, password: password, setupCode: setupCode, alias: alias, savedEndpoint: nil)
+        } catch { failToConnect(error); return }
+        await startSignIn(to: target)
+    }
+
+    /// Signs in again for the Gateway the sign-in state is for, or else for the active Gateway. A failed
+    /// sign-in is repeated with the target it resolved, even if the form changed while it ran.
+    func signInWithCloudflareAccessAgain() async {
+        if let failedSignIn {
+            // A new attempt needs a bootstrap token that is still good; a running attempt keeps its own.
+            if let expiry = failedSignIn.setupExpiresAt, connectionAccess.now() >= expiry {
+                failSignIn(to: failedSignIn, message: GatewayEndpoint.setupExpiredMessage); return
+            }
+            await startSignIn(to: failedSignIn); return
+        }
+        guard let target = accessSignIn.target ?? (isDemo ? nil : endpoint) else { return }
+        await signInWithCloudflareAccess(urlText: target.absoluteString, secret: "", password: false, setupCode: "")
+    }
+
+    /// Lets go of a failed sign-in once the form changes after it, so that signing in again goes by the form,
+    /// such as a corrected URL. Any other state stays, a running sign-in too.
+    func dismissFailedCloudflareAccessSignIn() {
+        if case .failed = accessSignIn { accessSignIn = .idle }
+    }
+
+    /// Whether a sign-in can start: the last one has ended, including the connect with its session.
+    private var canStartSignIn: Bool { !isSigningInToAccess && accessSignInTask == nil && !inBackground && !Task.isCancelled }
+
+    /// Signs in to `target` and returns once the sign-in has ended.
+    private func startSignIn(to target: ConnectionTarget) async {
+        guard canStartSignIn else { return }
+        accessSignIn = .checking(target: target.url)
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.signIn(to: target)
+        }
+        accessSignInTask = task
+        await task.value
+    }
+
+    /// Stops a running sign-in. Nothing it brought back is saved, unless its connect has saved the session
+    /// already; the next connect to that Gateway then uses it.
+    func cancelCloudflareAccessSignIn() {
+        guard isSigningInToAccess else { return }
+        accessSignInTask?.cancel(); accessSignInTask = nil
+        accessSignIn = .idle
+    }
+
+    private func signIn(to target: ConnectionTarget) async {
+        let session: CloudflareAccessSession
+        do {
+            session = try await connectionAccess.accessAuthenticator.signIn(target.url) { [weak self] link, opened, host, team in
+                guard let self, !Task.isCancelled, self.accessSignIn == .checking(target: target.url) else { return }
+                self.accessSignIn = .waitingForBrowser(target: target.url, link: link, opened: opened, host: host, team: team)
+            }
+            try Task.checkCancellation()
+        } catch {
+            // A cancelled sign-in is idle already.
+            guard !Task.isCancelled else { return }
+            accessSignInTask = nil
+            failSignIn(to: target, message: (error as? GatewayFailure)?.message ?? Self.signInFailedMessage)
+            return
+        }
+        accessSignIn = .checking(target: target.url)
+        // A pending reconnect would only race this connect, and a change already under way may finish first.
+        reconnectTask?.cancel(); reconnectTask = nil
+        if await connectionChangeFinished() { await connect(to: target, accessChange: .session(session)) }
+        guard !Task.isCancelled else { return }
+        accessSignInTask = nil
+        if case .checking = accessSignIn {
+            failSignIn(to: target, message: Self.signInCouldNotConnectMessage)
+        } else if connectionState == .connected, endpoint == target.url, notice == nil, let identity = accessIdentity {
+            notice = "\(identity.email ?? identity.subject) でサインインしました"
+        }
+    }
+
+    /// Ends a sign-in to `target` without a session, keeping what it was given for signing in again.
+    private func failSignIn(to target: ConnectionTarget, message: String) {
+        accessSignIn = .failed(target: target.url, message: message)
+        failedSignIn = target
+    }
+
+    /// Waits up to ten seconds for a connection change already under way, such as a reconnect, to finish.
+    private func connectionChangeFinished() async -> Bool {
+        let deadline = connectionAccess.now().addingTimeInterval(10)
+        while changingConnection {
+            guard connectionAccess.now() < deadline else { return false }
+            do { try await Task.sleep(for: .milliseconds(20)) } catch { return false }
+        }
+        return true
     }
 
     func retryConnection() async {
-        guard !changingConnection else { return }
+        // While a browser sign-in runs, its own connect comes next.
+        guard !changingConnection, !isSigningInToAccess else { return }
         autoConnect = true
         reconnectTask?.cancel(); attemptedAutomaticRecovery = false
         await reconnect()
     }
 
     private func reconnect() async {
-        guard !changingConnection, connectionState != .connecting else { return }
+        guard !changingConnection, !isSigningInToAccess, connectionState != .connecting else { return }
         if isDemo { await startDemo(); return }
         guard let endpoint else { return }
         guard let transaction = beginConnectionSwitch() else { return }
@@ -294,8 +503,7 @@ final class AppModel {
         do {
             try validateConnectionSwitch(transaction)
             let credentials = try connectionAccess.read(credentialKey(endpoint)) ?? GatewayCredentials()
-            service = try connectionAccess.makeService(endpoint, credentials)
-            await establishConnection()
+            try await startService(endpoint, with: credentials, transaction: transaction)
         } catch is CancellationError { if service == nil { connectionState = .disconnected } }
         catch { fail(error) }
     }
@@ -317,6 +525,7 @@ final class AppModel {
         await retireConnection()
     }
     func disconnect() async {
+        cancelCloudflareAccessSignIn()
         reconnectTask?.cancel()
         autoConnect = false; connectionSwitch = nil; connectionState = .disconnected
         let generation = connectionGeneration
@@ -329,6 +538,8 @@ final class AppModel {
     private func beginConnectionSwitch() -> UUID? {
         guard !changingConnection, !inBackground, !Task.isCancelled else { return nil }
         changingConnection = true; connectionState = .connecting
+        // A sign-in that has ended was about the connection this change replaces; a running one keeps its state.
+        if !isSigningInToAccess { accessSignIn = .idle }
         let transaction = UUID(); connectionSwitch = transaction
         return transaction
     }
@@ -337,9 +548,10 @@ final class AppModel {
     }
     private func finishConnectionSwitch() {
         changingConnection = false; connectionSwitch = nil
-        if !inBackground, !Task.isCancelled, autoConnect, connectionState == .disconnected {
+        if !inBackground, !Task.isCancelled, autoConnect, !isSigningInToAccess, connectionState == .disconnected {
             reconnectTask = Task { [weak self] in
-                guard !Task.isCancelled, let self, !self.inBackground, self.autoConnect, !self.changingConnection, self.connectionState == .disconnected else { return }
+                guard !Task.isCancelled, let self, !self.inBackground, self.autoConnect, !self.changingConnection, !self.isSigningInToAccess,
+                      self.connectionState == .disconnected else { return }
                 self.reconnectTask = nil
                 if self.endpoint == nil, !self.isDemo { await self.restore() }
                 else { await self.reconnect() }
@@ -371,10 +583,7 @@ final class AppModel {
                 viewerTask = Task { [weak self] in await self?.resolveViewerProfile(generation: generation) }
             }
             if let endpoint, let token = received.payload["auth"]["deviceToken"].stringValue {
-                let old = try connectionAccess.read(credentialKey(endpoint))
-                let scopes = received.payload["auth"]["scopes"].arrayValue?.compactMap(\.stringValue)
-                let storedScopes = old?.deviceToken == token ? (old?.scopes ?? scopes) : scopes
-                try connectionAccess.write(GatewayCredentials(deviceToken: token, scopes: storedScopes, access: old?.access), credentialKey(endpoint))
+                try saveDeviceToken(token, scopes: received.payload["auth"]["scopes"].arrayValue?.compactMap(\.stringValue), for: endpoint)
             }
             let defaults = received.snapshot["sessionDefaults"]
             guard let agentID = defaults["defaultAgentId"].stringValue, let mainKey = defaults["mainSessionKey"].stringValue else {
@@ -385,6 +594,8 @@ final class AppModel {
             if store.selectedSession == nil { store.selectedID = agentID + "|" + mainKey }
             attemptedAutomaticRecovery = false
             connectionState = .connected
+            if !isSigningInToAccess { accessSignIn = .idle }
+            if let endpoint, let expiry = accessIdentity?.expiresAt { scheduleAccessExpiry(at: expiry, of: endpoint, generation: generation) }
             do { try await refreshRoster() }
             catch { if connectionGeneration == generation { notice = "会話一覧を更新できませんでした。再接続でやり直せます。" } }
             guard connectionGeneration == generation, !inBackground else { return }
@@ -400,9 +611,49 @@ final class AppModel {
                 await retireConnection()
                 return
             }
-            if let failure = error as? GatewayFailure, failure.code == "NOT_PAIRED" || failure.details["code"].stringValue == "PAIRING_REQUIRED" {
+            if let failure = error as? GatewayFailure, ["ACCESS_REQUIRED", "ACCESS_IDENTITY_REQUIRED"].contains(failure.code) {
+                // Access took no session from this connect, so no one is signed in.
+                accessIdentity = nil
+                // A running sign-in keeps its state: it is already getting the session this refusal asks for.
+                if let endpoint, !isSigningInToAccess { accessSignIn = .required(target: endpoint, message: failure.message) }
+                fail(failure)
+            } else if let failure = error as? GatewayFailure, Self.asksForPairing(failure) {
                 connectionState = .pairing(requestID: failure.details["requestId"].stringValue ?? "", message: "Gateway 側でこの端末を承認してから、再接続してください。")
             } else { fail(error) }
+        }
+    }
+
+    /// A refusal asks for this device to be approved when it names its pairing request or says so in its
+    /// code. Others, such as one for want of a verified person, are shown as they are.
+    private static func asksForPairing(_ failure: GatewayFailure) -> Bool {
+        failure.details["code"].stringValue == "PAIRING_REQUIRED"
+            || (failure.code == "NOT_PAIRED" && !(failure.details["requestId"].stringValue ?? "").isEmpty)
+    }
+
+    /// Saves the device token the Gateway issued in its hello. While a Cloudflare Access session is the
+    /// credential it is not saved: presented later, it would connect as the device without the person.
+    private func saveDeviceToken(_ token: String, scopes: [String]?, for endpoint: URL) throws {
+        let old = try connectionAccess.read(credentialKey(endpoint))
+        guard old?.accessSession == nil else { return }
+        let storedScopes = old?.deviceToken == token ? (old?.scopes ?? scopes) : scopes
+        try connectionAccess.write(GatewayCredentials(deviceToken: token, scopes: storedScopes).applying(.keep, savedWith: old, for: endpoint), credentialKey(endpoint))
+    }
+
+    /// Ends the connection once its Cloudflare Access application token expires at `expiry`. Access can keep
+    /// an open socket alive past it, but the person's sign-in is over until they sign in again.
+    private func scheduleAccessExpiry(at expiry: Date, of endpoint: URL, generation: UUID) {
+        accessExpiryTask?.cancel()
+        let delay = max(0, expiry.timeIntervalSince(connectionAccess.now()))
+        let sleep = connectionAccess.sleep
+        accessExpiryTask = Task { [weak self] in
+            do { try await sleep(.seconds(delay)) } catch { return }
+            guard let self, !Task.isCancelled, self.connectionGeneration == generation else { return }
+            self.accessExpiryTask = nil
+            let failure = GatewayFailure(code: "ACCESS_REQUIRED", message: "Cloudflare Access のサインインの有効期限が切れました。ブラウザでもう一度サインインしてください。")
+            self.accessIdentity = nil
+            if !self.isSigningInToAccess { self.accessSignIn = .required(target: endpoint, message: failure.message) }
+            self.fail(failure)
+            await self.retireConnection()
         }
     }
 
@@ -432,6 +683,7 @@ final class AppModel {
 
     private func retireConnection() async {
         connectionGeneration = UUID(); selectionGeneration = UUID()
+        accessExpiryTask?.cancel(); accessExpiryTask = nil
         agentIdentityRequest = UUID(); agentIdentityTask?.cancel(); agentIdentityTask = nil
         viewerTask?.cancel(); viewerTask = nil; viewer = .unresolved
         agentNames = [:]; workLogs = [:]
@@ -656,7 +908,7 @@ final class AppModel {
         guard connectionState == .connected, let service, let endpoint else {
             throw GatewayFailure(code: "NOT_CONNECTED", message: "Gateway に接続してから添付ファイルを読み込んでください。")
         }
-        let access = (try? connectionAccess.read(credentialKey(endpoint)))?.access
+        let access = (try? connectionAccess.read(credentialKey(endpoint)))?.accessCredential
         let data = try await GatewayArtifactLoader.load(attachment, session: session, service: service, endpoint: endpoint, access: access)
         guard composerContextID == context, selectedSession?.sessionID == session.sessionID else {
             throw GatewayFailure(code: "SESSION_CHANGED", message: "接続または会話が変わったため読み込みを中断しました。")
@@ -798,7 +1050,8 @@ final class AppModel {
     private func handle(_ event: GatewayEvent) async {
         if event.name == "client.disconnected" {
             store.retireTransientState(); connectionState = .disconnected; scheduleSave()
-            if autoConnect, !attemptedAutomaticRecovery {
+            // While a browser sign-in runs, its own connect comes next.
+            if autoConnect, !attemptedAutomaticRecovery, !isSigningInToAccess {
                 attemptedAutomaticRecovery = true
                 reconnectTask = Task { [weak self] in
                     do { try await Task.sleep(for: .milliseconds(750)) } catch { return }
@@ -1011,6 +1264,11 @@ final class AppModel {
     private func replaceStore(_ state: ConversationStore, persistence: (any ConversationPersisting)?, namespace: String?) {
         saveTask?.cancel(); saveTask = nil
         self.persistence = persistence; persistenceNamespace = namespace; persistenceRevision = 0
+        adoptStore(state)
+    }
+    /// Shows `state` in place of the current conversations, saved where they are; the revision keeps counting,
+    /// so an older save still in flight cannot overwrite it.
+    private func adoptStore(_ state: ConversationStore) {
         store = state
         store.retireTransientState()
         promptRecords = []; promptTargets = [:]; models = []; streamRevisions = [:]; sessionRevisions = [:]; pendingHistoryRefresh = []

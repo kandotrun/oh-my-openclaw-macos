@@ -90,7 +90,7 @@ public actor GatewayClient: GatewayServing {
             throw GatewayFailure(code: "MEDIA_PAIRING_REQUIRED", message: "画像を読み込むには、この端末を承認した Gateway に再接続してください。")
         }
         let currentEpoch = epoch
-        let data = try await GatewayInboundMediaLoader.load(reference, session: target, endpoint: endpoint, deviceToken: token, access: credentials.access)
+        let data = try await GatewayInboundMediaLoader.load(reference, session: target, endpoint: endpoint, deviceToken: token, access: credentials.accessCredential)
         try Task.checkCancellation()
         try requireCurrent(currentEpoch)
         guard admitted, self.hello != nil else { throw disconnectedError() }
@@ -121,23 +121,8 @@ public actor GatewayClient: GatewayServing {
                 receiveTask = Task { [weak self] in await self?.receiveLoop(task: task, epoch: connectionEpoch) }
             }
             try requireCurrent(connectionEpoch)
-            let scopes = credentials.scopes ?? Self.defaultScopes
-            var auth: [String: JSONValue] = [:]
-            if let token = credentials.token ?? credentials.deviceToken { auth["token"] = .string(token) }
-            else if let bootstrap = credentials.bootstrapToken { auth["bootstrapToken"] = .string(bootstrap) }
-            if let password = credentials.password { auth["password"] = .string(password) }
-            let params: JSONValue = .object([
-                "minProtocol": .number(4), "maxProtocol": .number(4),
-                "client": .object([
-                    "id": .string("gateway-client"), "displayName": .string(clientIdentity.displayName),
-                    "version": .string(clientIdentity.version), "platform": .string(clientIdentity.platform), "deviceFamily": .string(clientIdentity.deviceFamily),
-                    "mode": .string("ui"), "instanceId": .string(identity.deviceID),
-                ]),
-                "role": .string("operator"), "scopes": .array(scopes.map(JSONValue.string)),
-                "caps": .array(["tool-events", "session-scoped-events", "exec-approvals", "plugin-approvals", "approvals"].map(JSONValue.string)),
-                "auth": .object(auth), "locale": .string(Locale.preferredLanguages.first ?? "ja-JP"),
-                "device": try identity.deviceProof(nonce: challenge.nonce, signedAt: challenge.signedAt, credentials: credentials, scopes: scopes),
-            ])
+            let params = try Self.connectParams(credentials: credentials, identity: identity, clientIdentity: clientIdentity,
+                                                nonce: challenge.nonce, signedAt: challenge.signedAt)
             let response = try await sendRequest(method: "connect", params: params, epoch: connectionEpoch)
             try requireCurrent(connectionEpoch)
             guard response["type"].stringValue == "hello-ok", response["protocol"].intValue == 4,
@@ -157,9 +142,35 @@ public actor GatewayClient: GatewayServing {
             startWatchdog(epoch: connectionEpoch, interval: interval)
             return result
         } catch {
-            close(epoch: connectionEpoch, error: error, notify: false)
-            throw error
+            let failure: any Error = (error as? GatewayFailure).map { Self.accessFailure($0, credentials: credentials) } ?? error
+            close(epoch: connectionEpoch, error: failure, notify: false)
+            throw failure
         }
+    }
+
+    /// The `connect` params. A Cloudflare Access session speaks for the person, so a device token
+    /// saved before the sign-in is neither presented nor signed: it would connect as the device alone.
+    static func connectParams(credentials saved: GatewayCredentials, identity: DeviceIdentity, clientIdentity: GatewayClientIdentity,
+                              nonce: String, signedAt: Int64) throws -> JSONValue {
+        var credentials = saved
+        if saved.accessCredential is CloudflareAccessSession { credentials.deviceToken = nil }
+        let scopes = credentials.scopes ?? defaultScopes
+        var auth: [String: JSONValue] = [:]
+        if let token = credentials.token ?? credentials.deviceToken { auth["token"] = .string(token) }
+        else if let bootstrap = credentials.bootstrapToken { auth["bootstrapToken"] = .string(bootstrap) }
+        if let password = credentials.password { auth["password"] = .string(password) }
+        return .object([
+            "minProtocol": .number(4), "maxProtocol": .number(4),
+            "client": .object([
+                "id": .string("gateway-client"), "displayName": .string(clientIdentity.displayName),
+                "version": .string(clientIdentity.version), "platform": .string(clientIdentity.platform), "deviceFamily": .string(clientIdentity.deviceFamily),
+                "mode": .string("ui"), "instanceId": .string(identity.deviceID),
+            ]),
+            "role": .string("operator"), "scopes": .array(scopes.map(JSONValue.string)),
+            "caps": .array(["tool-events", "session-scoped-events", "exec-approvals", "plugin-approvals", "approvals"].map(JSONValue.string)),
+            "auth": .object(auth), "locale": .string(Locale.preferredLanguages.first ?? "ja-JP"),
+            "device": try identity.deviceProof(nonce: nonce, signedAt: signedAt, credentials: credentials, scopes: scopes),
+        ])
     }
 
     private func sendRequest(method: String, params: JSONValue, epoch connectionEpoch: UUID) async throws -> JSONValue {
@@ -208,7 +219,7 @@ public actor GatewayClient: GatewayServing {
             }
         } catch {
             guard connectionEpoch == epoch else { return }
-            let failure = (error as? GatewayFailure) ?? Self.upgradeRefusal(task.response) ?? GatewayFailure(code: "CONNECTION_LOST", message: "Gateway との接続が切れました。接続先とネットワークを確認してください。", details: .object(["networkCode": .number(Double((error as NSError).code))]))
+            let failure = (error as? GatewayFailure) ?? Self.upgradeRefusal(task.response, credentials: credentials) ?? GatewayFailure(code: "CONNECTION_LOST", message: "Gateway との接続が切れました。接続先とネットワークを確認してください。", details: .object(["networkCode": .number(Double((error as NSError).code))]))
             close(epoch: connectionEpoch, error: failure, notify: hello != nil)
         }
     }
@@ -312,22 +323,41 @@ public actor GatewayClient: GatewayServing {
         for observer in observers.values { if case .dropped = observer.yield(event) { retained = false } }
         return retained
     }
-    /// The socket upgrade, with the Cloudflare Access service token when one is saved.
+    /// The socket upgrade, with the Gateway's Cloudflare Access credential when one is saved.
     static func upgradeRequest(_ endpoint: URL, credentials: GatewayCredentials) -> URLRequest {
         var request = URLRequest(url: endpoint)
-        credentials.access?.apply(to: &request)
+        credentials.accessCredential?.apply(to: &request)
         return request
     }
 
     /// An HTTP answer in place of the WebSocket upgrade, such as a Cloudflare Access login redirect.
-    static func upgradeRefusal(_ response: URLResponse?) -> GatewayFailure? {
+    /// `credentials` are the ones the upgrade went out with: a refused session needs a new sign-in.
+    static func upgradeRefusal(_ response: URLResponse?, credentials: GatewayCredentials = GatewayCredentials()) -> GatewayFailure? {
         guard let response = response as? HTTPURLResponse, response.statusCode != 101 else { return nil }
         if (300..<400).contains(response.statusCode),
            let location = response.value(forHTTPHeaderField: "Location").flatMap(URL.init(string:)),
            location.host?.lowercased().hasSuffix(".cloudflareaccess.com") == true {
-            return GatewayFailure(code: "ACCESS_REQUIRED", message: "Cloudflare Access のログインを求められました。接続設定に Access のサービストークン（Client ID と Client Secret）を入力してください。")
+            if credentials.accessCredential is CloudflareAccessSession {
+                return GatewayFailure(code: "ACCESS_REQUIRED", message: "Cloudflare Access のサインインが無効になりました。ブラウザでもう一度サインインしてください。")
+            }
+            return GatewayFailure(code: "ACCESS_REQUIRED", message: "Cloudflare Access のログインを求められました。ブラウザでサインインするか、Access のサービストークン（Client ID と Client Secret）を入力してください。")
         }
         return GatewayFailure(code: "UPGRADE_REFUSED", message: "接続先が WebSocket の接続を受け付けませんでした（HTTP \(response.statusCode)）。URL と、Cloudflare Access などの設定を確認してください。")
+    }
+
+    /// A connect the Gateway refused because no person stands behind it: Cloudflare Access let the
+    /// upgrade through without a signed-in user. That asks for a sign-in, not a pairing approval.
+    /// After a session was sent, the Gateway's own answer stands.
+    static func accessFailure(_ failure: GatewayFailure, credentials: GatewayCredentials) -> GatewayFailure {
+        let credential = credentials.accessCredential
+        guard !(credential is CloudflareAccessSession) else { return failure }
+        let userMissing = failure.code == "INVALID_REQUEST" && failure.details["authReason"].stringValue == "trusted_proxy_user_missing"
+        let verifiedUserRequired = failure.code == "NOT_PAIRED" && failure.details["code"].stringValue == "AUTH_VERIFIED_USER_REQUIRED"
+        guard userMissing || verifiedUserRequired else { return failure }
+        if credential is CloudflareAccessToken {
+            return GatewayFailure(code: "ACCESS_IDENTITY_REQUIRED", message: "この Gateway は Cloudflare Access のサービストークンでは操作できません。ブラウザで本人のアカウントにサインインしてください。")
+        }
+        return GatewayFailure(code: "ACCESS_IDENTITY_REQUIRED", message: "この Gateway を操作するには Cloudflare Access のサインインが必要です。ブラウザで本人のアカウントにサインインしてください。")
     }
 
     private func removeObserver(_ id: UUID) { observers.removeValue(forKey: id) }

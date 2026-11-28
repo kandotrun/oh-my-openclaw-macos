@@ -3,9 +3,10 @@ import XCTest
 /// Each launch uses an ephemeral store, so tests never read or change the
 /// developer's saved Gateways, conversations, or Keychain items.
 @MainActor
-private func launchIsolatedApp() -> XCUIApplication {
+private func launchIsolatedApp(environment: [String: String] = [:]) -> XCUIApplication {
     let app = XCUIApplication()
     app.launchEnvironment["OHMYOPENCLAW_EPHEMERAL_STORE"] = "1"
+    app.launchEnvironment.merge(environment) { $1 }
     app.launch()
     return app
 }
@@ -238,6 +239,32 @@ final class DemoSmokeTests: XCTestCase {
         token.typeText("synthetic-token")
         app.buttons["connectButton"].click()
         XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "mainThreadRow").firstMatch.waitForExistence(timeout: 15))
+    }
+
+    /// `just uitest` starts scripts/gateway-fixture.py --signin: a Gateway behind a stand-in for Cloudflare
+    /// Access, whose origin also plays the team domain and the relay. In place of the browser, the app
+    /// fetches the sign-in link itself, which approves the sign-in as the person would.
+    @MainActor
+    func testBrowserSignInGetsThroughCloudflareAccess() throws {
+        guard let fixture = ProcessInfo.processInfo.environment["OHMYOPENCLAW_SIGNIN_FIXTURE"],
+              var origin = URLComponents(string: fixture) else {
+            throw XCTSkip("Run through `just uitest`, which starts the sign-in fixture.")
+        }
+        origin.scheme = "http"
+        let app = launchIsolatedApp(environment: ["OHMYOPENCLAW_ACCESS_FIXTURE_ORIGIN": try XCTUnwrap(origin.string)])
+        // The URL alone: the Access edge sends the upgrade to its login page.
+        let url = app.textFields["connectionURL"]
+        XCTAssertTrue(url.waitForExistence(timeout: 10))
+        url.click()
+        url.typeText(fixture)
+        app.buttons["connectButton"].click()
+        XCTAssertTrue(text(containing: "Cloudflare Access のログイン", in: app).waitForExistence(timeout: 15))
+        let signIn = app.buttons["accessSignInButton"]
+        XCTAssertTrue(signIn.waitForExistence(timeout: 5))
+        // It is enabled again once the refused connect has finished.
+        XCTAssertTrue(signIn.wait(for: \.isEnabled, toEqual: true, timeout: 10))
+        signIn.click()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "mainThreadRow").firstMatch.waitForExistence(timeout: 30))
     }
 
     /// `just uitest` starts scripts/gateway-fixture.py --shared, whose main thread holds a teammate's message.

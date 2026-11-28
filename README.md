@@ -36,6 +36,7 @@ Mac-specific changes so far:
 - User rows keep the sender the Gateway recorded, and the store remembers the viewer's profile per Gateway, so shared sessions show who wrote each message.
 - Credentials can hold a Cloudflare Access service token, which is sent to Gateways published behind Cloudflare Access.
 - Tool calls in history become an in-memory work log, which folds each settled turn's work in the transcript.
+- People can sign in to Cloudflare Access in their browser, the way `cloudflared access login` does. Gateways that use OpenClaw's trusted-proxy auth then know who is operating. The person's application token is sent as `Cf-Access-Token`, and only to the Gateway origin.
 
 The client targets Gateway protocol v4, checked against OpenClaw `main` at [`b1d355f`](https://github.com/openclaw/openclaw/tree/b1d355fcc9fcf91a4514c2612ce7b33211c710b6) (release 2026.11.10).
 Adapted OpenClaw authentication code retains its upstream MIT notice in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
@@ -44,7 +45,7 @@ Adapted OpenClaw authentication code retains its upstream MIT notice in [THIRD_P
 
 ```sh
 just test     # Python fixture tests and swift test
-just lint     # ast-grep layer rules and their tests
+just lint     # ast-grep rules and their tests, and the vendored TweetNaCl checksums
 just uitest   # XCUITest smoke test against the demo
 ```
 

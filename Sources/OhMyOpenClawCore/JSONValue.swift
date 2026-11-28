@@ -47,10 +47,27 @@ public struct GatewayCredentials: Codable, Sendable, Equatable {
     public var scopes: [String]?
     /// Sent with every request to a Gateway published behind Cloudflare Access.
     public var access: CloudflareAccessToken?
-    public init(token: String? = nil, password: String? = nil, bootstrapToken: String? = nil, deviceToken: String? = nil, scopes: [String]? = nil, access: CloudflareAccessToken? = nil) {
+    /// A person's Cloudflare Access sign-in, which requests carry in place of `access`.
+    public var accessSession: CloudflareAccessSession?
+    public init(token: String? = nil, password: String? = nil, bootstrapToken: String? = nil, deviceToken: String? = nil, scopes: [String]? = nil,
+                access: CloudflareAccessToken? = nil, accessSession: CloudflareAccessSession? = nil) {
         self.token = token; self.password = password; self.bootstrapToken = bootstrapToken
-        self.deviceToken = deviceToken; self.scopes = scopes; self.access = access
+        self.deviceToken = deviceToken; self.scopes = scopes; self.access = access; self.accessSession = accessSession
     }
+
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        token = try values.decodeIfPresent(String.self, forKey: .token)
+        password = try values.decodeIfPresent(String.self, forKey: .password)
+        bootstrapToken = try values.decodeIfPresent(String.self, forKey: .bootstrapToken)
+        deviceToken = try values.decodeIfPresent(String.self, forKey: .deviceToken)
+        scopes = try values.decodeIfPresent([String].self, forKey: .scopes)
+        access = try values.decodeIfPresent(CloudflareAccessToken.self, forKey: .access)
+        // A session that fails validation is dropped, so the rest of the saved item stays readable.
+        accessSession = try? values.decodeIfPresent(CloudflareAccessSession.self, forKey: .accessSession)
+    }
+
+    private enum CodingKeys: String, CodingKey { case token, password, bootstrapToken, deviceToken, scopes, access, accessSession }
 }
 
 public struct GatewayHello: Sendable {

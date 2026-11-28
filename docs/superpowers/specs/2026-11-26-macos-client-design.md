@@ -160,6 +160,13 @@ Choose a project. Choose "New worktree" or "Current checkout", as offered by `pr
   - Redirects are never followed.
   - The form asks for both fields together. Leaving both blank keeps the saved token.
   - An Access login redirect is reported as such.
+- **Cloudflare Access sign-in.** A Gateway that uses OpenClaw's trusted-proxy auth needs the person behind each operator connection, which a service token does not carry. 「ブラウザでサインイン」 signs the person in the way `cloudflared access login` does.
+  - The client verifies the Access application first. It reads the signed `cf-access-metadata` header, checks the RS256 signature against the team's keys, and requires the signed hostname to be the Gateway's and the team domain to be `*.cloudflareaccess.com`.
+  - The browser opens `/cdn-cgi/access/cli` for a fresh X25519 key, and the client long-polls Cloudflare's relay. The relay hands over a NaCl box with the application token. The org token in the same box is dropped unread.
+  - The session saves the token with the Gateway origin, team domain, audience, and subject. `Cf-Access-Token` goes only to that origin. A session replaces a saved service token, and the reverse is true too. With a session, the client sends no stored device token, so every connection carries a person.
+  - When the token expires, the connection ends and the app asks for a sign-in again. Silent renewal through the org token is left out.
+  - Each Gateway's cache remembers the person who last signed in to it. Signing in as someone else clears its cached threads, drafts, and pending sends, even when a service token was used in between.
+  - While the browser is open, the copy names the Gateway host and the team domain. After sign-in it names the person.
 - **Settings scene (Cmd-,).** Saved Gateways (add, rename, delete, switch, reconnect, disconnect), the notification switch, and the app version.
 
 ### Commands
@@ -193,6 +200,11 @@ All changes are test-first:
    - User rows keep the sender the Gateway recorded, as an optional `ChatMessage.sender`.
    - The store keeps the last viewer profile id per Gateway, also optional.
    - A sender that cannot be read decodes as empty, so a saved store always loads.
+9. **Cloudflare Access sign-in.**
+   - Credentials gain an optional `accessSession`. A session that does not validate decodes as nil, so the rest of the saved credentials still load.
+   - The store keeps the owner of its conversations (team domain, audience, subject), also optional.
+   - `NaClBox` opens the relay's transfer through vendored TweetNaCl (`CTweetNaCl`), which only `NaClBox.swift` may import.
+   - ast-grep rules keep the Access header names, token reads, and `apply(to:)` calls inside the files that need them, and ban logging there.
 
 ## Mac components
 

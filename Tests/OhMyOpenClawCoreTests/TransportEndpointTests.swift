@@ -24,6 +24,16 @@ struct TransportEndpointTests {
         #expect(decoded.expiresAtMs != nil)
     }
 
+    @Test func setupCodeExpiresAtItsDeadlineOnTheGivenClock() throws {
+        let expiresAt = Date(timeIntervalSince1970: 1_000_000_000)
+        let json: JSONValue = .object(["url": .string("wss://example.invalid"), "bootstrapToken": .string("test"), "expiresAtMs": .number(1_000_000_000_000)])
+        let code = try JSONEncoder().encode(json).base64URL
+        #expect(try GatewayEndpoint.decodeSetupCode(code, now: expiresAt.addingTimeInterval(-0.001)).bootstrapToken == "test")
+        for now in [expiresAt, expiresAt.addingTimeInterval(1)] {
+            #expect { try GatewayEndpoint.decodeSetupCode(code, now: now) } throws: { ($0 as? GatewayFailure)?.code == "SETUP_EXPIRED" }
+        }
+    }
+
     @Test func rejectsExpiredMalformedAndPinnedSetupCodes() throws {
         let cases: [JSONValue] = [
             .object(["url": .string("wss://example.invalid"), "bootstrapToken": .string("test"), "expiresAtMs": .number(0)]),

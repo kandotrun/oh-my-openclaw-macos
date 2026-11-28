@@ -31,6 +31,8 @@ struct OhMyOpenClawApp: App {
                     .disabled(delegate.model.connectionState != .connected)
                 Button("再接続") { Task { await delegate.model.retryConnection() } }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
+                    // A browser sign-in's own connect comes next.
+                    .disabled(delegate.model.isSigningInToAccess)
             }
         }
 

@@ -33,7 +33,7 @@ public enum GatewayArtifactLoader {
     public static let maxImageBytes = 12 * 1024 * 1024
     public static let maxFileBytes = 20 * 1024 * 1024
 
-    public static func load(_ attachment: ChatAttachment, session: ChatSession, service: any GatewayServing, endpoint: URL, access: CloudflareAccessToken? = nil) async throws -> Data {
+    public static func load(_ attachment: ChatAttachment, session: ChatSession, service: any GatewayServing, endpoint: URL, access: (any CloudflareAccessCredential)? = nil) async throws -> Data {
         let limit = attachment.mimeType.hasPrefix("image/") ? maxImageBytes : maxFileBytes
         if !attachment.data.isEmpty {
             guard attachment.data.count <= limit else { throw tooLarge() }
@@ -84,7 +84,7 @@ public enum GatewayArtifactLoader {
     }
 
     /// A download from a URL that `trustedDownloadURL` placed on the Gateway origin.
-    static func downloadRequest(_ url: URL, access: CloudflareAccessToken?) -> URLRequest {
+    static func downloadRequest(_ url: URL, access: (any CloudflareAccessCredential)?) -> URLRequest {
         var request = URLRequest(url: url)
         request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
         access?.apply(to: &request)

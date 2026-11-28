@@ -315,3 +315,16 @@ private func chat(_ state: String, run: String = "run", session: ChatSession = m
                                 "inFlightRun": .object(["runId": .string("r1"), "text": .string("")])]), for: session)
     #expect(store.activities[session.id] == .working)
 }
+
+@Test func theAccessOwnerIsSavedAndAStoreSavedBeforeItLoadsWithNone() throws {
+    var store = fixtureStore()
+    store.accessOwner = CloudflareAccessAccount(authDomain: "team.cloudflareaccess.com", audience: "audience", subject: "person-a")
+    #expect(try JSONDecoder().decode(ConversationStore.self, from: JSONEncoder().encode(store)).accessOwner == store.accessOwner)
+    let savedBefore = """
+    {"sessions":[],"drafts":{},"transcripts":{},"pending":{},"creationRequests":{},"activeRunIDs":{},"activities":{},
+     "runSequences":{},"viewerProfileID":"p1"}
+    """
+    let restored = try JSONDecoder().decode(ConversationStore.self, from: Data(savedBefore.utf8))
+    #expect(restored.accessOwner == nil)
+    #expect(restored.viewerProfileID == "p1")
+}
