@@ -118,6 +118,7 @@ struct TimelineTests {
             failure("t1", call: "c1", at: 4),
         ]
         #expect(shape(build(records)) == ["message 直して", "message 確認します。", "message 直しました。", "entry c1"])
+        #expect(shape(build(records, failed: ["r1"])) == ["message 直して", "message 確認します。", "message 直しました。", "entry c1"])
     }
 
     @Test func aFailureAfterAnImageOnlyAnswerStaysInView() {

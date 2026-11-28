@@ -33,6 +33,11 @@ struct ToolDiffTests {
         #expect(diff.stat == ToolDiff.Stat(added: 1, removed: 1))
     }
 
+    @Test func windowsLineEndingsSplitIntoRows() throws {
+        let diff = try #require(ToolDiff.numbered(" 1 a\r\n-2 b\r\n+2 c\r\n"))
+        #expect(diff.lines == [line(.context, 1, "a"), line(.removed, 2, "b"), line(.added, 2, "c")])
+    }
+
     @Test func textThatIsNotADiffIsRejected() {
         #expect(ToolDiff.numbered("raw line") == nil)
         #expect(ToolDiff.numbered(" 1 a\n 2 b") == nil)

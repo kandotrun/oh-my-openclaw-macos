@@ -240,6 +240,24 @@ struct WorkLogProjectionTests {
         #expect(diff.isClipped)
     }
 
+    @Test func aResultsActivityItemKeepsItsJoinedCallInView() throws {
+        // Each page's activity is computed alone, so the call's page listed no item for the unpaired call.
+        let older = WorkLogProjection.project(messages: [basePage[1]], activity: .array([.object(["messageId": .string("a1"), "items": .array([])])]),
+                                              fallbackPrefix: "older:0")
+        let activity: JSONValue = .array([.object(["messageId": .string("t1"), "items": .array([.object([
+            "kind": .string("tool"), "toolCallId": .string("c1"), "status": .string("failed"),
+        ])])])])
+        let newer = WorkLogProjection.project(messages: [named(basePage[2], "exec")], activity: activity, fallbackPrefix: "history")
+        #expect(try #require(newer.adding(older: older).entries["a1"]?.first).isRoutine == false)
+    }
+
+    @Test func aResultsActivityListThatOmitsTheCallHidesItAfterJoining() throws {
+        let older = WorkLogProjection.project(messages: [basePage[1]], activity: .null, fallbackPrefix: "older:0")
+        let newer = WorkLogProjection.project(messages: [named(basePage[2], "exec")], activity: .array([.object(["messageId": .string("t1"), "items": .array([])])]),
+                                              fallbackPrefix: "history")
+        #expect(try #require(newer.adding(older: older).entries["a1"]?.first).isRoutine)
+    }
+
     @Test func finalRepliesAreAssistantTextWithoutCalls() {
         let page = basePage + [record("a2", "assistant", run: "r1", at: 28000, content: .array([text("直しました。")]))]
         #expect(WorkLogProjection.project(messages: page, activity: .null, fallbackPrefix: "history").finalReplies == ["a2"])

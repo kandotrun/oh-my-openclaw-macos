@@ -93,7 +93,7 @@ enum Timeline {
         let runs = runIDs(turn, entries: entries)
         if !runs.isDisjoint(with: input.page?.failedRuns ?? []) || turn.units.contains(where: isFailedReply) {
             // A failed run lists every call, so nothing that went wrong hides in a group.
-            return head + turn.units.compactMap { unit in
+            return head + chronological(turn.units).compactMap { unit in
                 switch unit {
                 case .message(let row, _): message(row, input)
                 case .entry(let entry, _): .entry(entry, live: false)

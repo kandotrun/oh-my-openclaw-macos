@@ -106,7 +106,8 @@ public struct ToolDiff: Sendable, Equatable {
     }
 
     private static func rows(_ text: String) -> [String] {
-        text.split(separator: "\n", omittingEmptySubsequences: false).map { String($0.hasSuffix("\r") ? $0.dropLast() : $0) }
+        // "\r\n" is one Character, so it never equals "\n".
+        text.split(omittingEmptySubsequences: false, whereSeparator: { $0 == "\n" || $0 == "\r\n" }).map { String($0.hasSuffix("\r") ? $0.dropLast() : $0) }
     }
 
     private static func kind(_ marker: Character?) -> LineKind {

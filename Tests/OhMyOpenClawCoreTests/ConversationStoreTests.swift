@@ -304,3 +304,14 @@ private func chat(_ state: String, run: String = "run", session: ChatSession = m
     store.applyHistory(page("r2", ""), for: session)
     #expect(store.activities[session.id] == .working)
 }
+
+@Test func historyDuringTheSameRunDropsAnApprovalHint() {
+    // Another client may have resolved the approval, and only a local answer clears the hint.
+    let session = ChatSession(key: "agent:a:main", agentID: "a", sessionID: "physical", title: "Main", isMain: true)
+    var store = ConversationStore()
+    store.upsertSession(session)
+    store.activeRunIDs[session.id] = "r1"; store.activities[session.id] = .waitingForApproval
+    store.applyHistory(.object(["sessionId": .string("physical"), "messages": .array([]),
+                                "inFlightRun": .object(["runId": .string("r1"), "text": .string("")])]), for: session)
+    #expect(store.activities[session.id] == .working)
+}

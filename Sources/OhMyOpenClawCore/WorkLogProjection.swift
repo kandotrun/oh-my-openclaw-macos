@@ -151,6 +151,7 @@ public enum WorkLogProjection {
                 let item = records.lazy.compactMap { lists[$0] }.flatMap { $0 }
                     .first { $0["toolCallId"].stringValue == entry.toolCallID && ($0["kind"].stringValue ?? "tool") == "tool" }
                 if let item {
+                    entry.hasActivityItem = true
                     entry.title = item["title"].stringValue ?? entry.title
                     if entry.summary.isEmpty { entry.summary = item["summary"].stringValue ?? item["meta"].stringValue ?? "" }
                     if item["unpairedCall"].boolValue == true { entry.state = .unknown }

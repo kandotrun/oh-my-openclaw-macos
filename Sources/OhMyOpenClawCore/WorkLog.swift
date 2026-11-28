@@ -25,6 +25,8 @@ public struct WorkLogEntry: Sendable, Equatable, Identifiable {
     public var diff: ToolDiff?
     /// OpenClaw hides routine calls such as polling from progress lists.
     public var isRoutine = false
+    /// The page's activity list for this call's records described it.
+    public var hasActivityItem = false
     /// The record that holds the call, or the result record when the call is not on this page.
     public var anchorRecordID: String
     /// False for a result whose call is on another page.
@@ -84,6 +86,9 @@ public struct WorkLogPage: Sendable, Equatable {
                 call.exitCode = orphan.exitCode; call.durationMs = orphan.durationMs ?? call.durationMs
                 call.diff = orphan.diff ?? call.diff; call.resultRecordID = orphan.resultRecordID
                 if call.title == nil { call.title = orphan.title }
+                // Each page's activity is computed alone. Where the result's record has a list, it knew the
+                // outcome, which can make a call routine, so it decides.
+                if orphan.hasActivityItem || orphan.isRoutine { call.isRoutine = orphan.isRoutine }
                 call.settleKind()
                 merged.entries[callAnchor]![index] = call
                 merged.entries[anchor]?.removeAll { $0.id == orphan.id }
