@@ -93,10 +93,11 @@ public enum WorkLogProjection {
         if let envelope = call.args["input"].stringValue { entry.diff = ToolDiff.patchEnvelope(envelope) }
         if entry.diff == nil, let changes = call.args["changes"].arrayValue {
             entry.diff = ToolDiff.joined(changes.compactMap { change in
-                change["diff"].stringValue.flatMap { text in
-                    let stat = change["stat"]["added"].intValue.flatMap { added in change["stat"]["removed"].intValue.map { ToolDiff.Stat(added: added, removed: $0) } }
-                    return ToolDiff.unified(text, path: change["path"].stringValue ?? "", stat: stat, truncated: change["diffTruncated"].boolValue == true)
-                }
+                // Past OpenClaw's diff budget a change keeps its path and line counts but no text.
+                let truncated = change["diffTruncated"].boolValue == true
+                guard let text = change["diff"].stringValue ?? (truncated ? "" : nil) else { return nil }
+                let stat = change["stat"]["added"].intValue.flatMap { added in change["stat"]["removed"].intValue.map { ToolDiff.Stat(added: added, removed: $0) } }
+                return ToolDiff.unified(text, path: change["path"].stringValue ?? "", stat: stat, truncated: truncated)
             })
         }
         return entry

@@ -72,6 +72,7 @@ public struct ToolDiff: Sendable, Equatable {
     }
 
     /// A unified diff for one file, as Codex reports it. A stat the runtime provides wins over counting.
+    /// A truncated diff shows as partial, and still names its file when the runtime omitted every line.
     public static func unified(_ text: String, path: String, stat provided: Stat? = nil, truncated: Bool = false) -> ToolDiff? {
         var lines = [Line(kind: .file, number: nil, text: path)]
         var old = 0, new = 0, inHunk = false
@@ -89,7 +90,9 @@ public struct ToolDiff: Sendable, Equatable {
             default: continue
             }
         }
-        return make(lines, incomplete: truncated, files: [path], provided: provided, requiresChange: provided == nil)
+        var diff = make(lines, incomplete: truncated, files: [path], provided: provided, requiresChange: provided == nil && !truncated)
+        if truncated { diff?.isClipped = true }
+        return diff
     }
 
     /// Several files' diffs as one, as a Codex patch reports them. The stat needs every file's.

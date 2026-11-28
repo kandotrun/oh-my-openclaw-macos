@@ -225,6 +225,21 @@ struct WorkLogProjectionTests {
         #expect(diff.stat == ToolDiff.Stat(added: 2, removed: 2))
     }
 
+    @Test func aCodexPatchPastTheDiffBudgetStillCountsEveryFile() throws {
+        // OpenClaw cuts the last diff that fits at a line and omits the rest, keeping each file's path and line counts.
+        let stat = { (added: Int, removed: Int) -> JSONValue in .object(["added": .number(Double(added)), "removed": .number(Double(removed))]) }
+        let changes: [JSONValue] = [
+            .object(["path": .string("a.swift"), "diff": .string("@@ -1 +1 @@\n-x\n+y"), "stat": stat(1, 1)]),
+            .object(["path": .string("b.swift"), "diff": .string("@@ -1,2 +1,2 @@\n-x\n+y\n"), "stat": stat(2, 2), "diffTruncated": .bool(true)]),
+            .object(["path": .string("c.swift"), "stat": stat(5, 0), "diffTruncated": .bool(true)]),
+        ]
+        let page = [record("a1", "assistant", run: "r1", content: .array([call("c1", "apply_patch", ["changes": .array(changes)])]))]
+        let diff = try #require(WorkLogProjection.project(messages: page, activity: .null, fallbackPrefix: "history").entries["a1"]?.first?.diff)
+        #expect(diff.files == ["a.swift", "b.swift", "c.swift"])
+        #expect(diff.stat == ToolDiff.Stat(added: 8, removed: 3))
+        #expect(diff.isClipped)
+    }
+
     @Test func finalRepliesAreAssistantTextWithoutCalls() {
         let page = basePage + [record("a2", "assistant", run: "r1", at: 28000, content: .array([text("直しました。")]))]
         #expect(WorkLogProjection.project(messages: page, activity: .null, fallbackPrefix: "history").finalReplies == ["a2"])
